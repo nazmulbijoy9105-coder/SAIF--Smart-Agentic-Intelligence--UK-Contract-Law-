@@ -18,18 +18,26 @@ from app.routers import assess, auth, payment, health, admin
 
 
 @asynccontextmanager
-async def lifespan(app):
+async def lifespan(application: FastAPI):
     settings = get_settings()
+    logger.info("=" * 60)
     logger.info(f"🚀 SAIF Starting — ENV={settings.ENVIRONMENT}")
+    logger.info(f"   Engine: ILRMF v1.0")
+    logger.info(f"   Creator: Md Nazmul Islam (Bijoy) — NB TECH")
+    logger.info(f"   Allowed Origins: {settings.allowed_origins_list}")
+    logger.info("=" * 60)
     yield
-    logger.info("🛑 SAIF Shutdown")
+    logger.info("🛑 SAIF Shutdown — ILRMF Engine stopped")
 
+
+settings = get_settings()
 
 app = FastAPI(
     title="SAIF — UK Contract Law AI",
     description="ILRMF Engine by Md Nazmul Islam (Bijoy) / NB TECH",
     version="1.0.0",
-    docs_url="/docs" if get_settings().ENVIRONMENT != "production" else None,
+    docs_url="/docs" if not settings.is_production else None,
+    redoc_url="/redoc" if not settings.is_production else None,
     lifespan=lifespan,
 )
 
@@ -37,30 +45,19 @@ app = FastAPI(
 # ── Global Exception Handler ────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"UNHANDLED: {type(exc).__name__}: {exc}")
+    logger.error(f"UNHANDLED: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
     return JSONResponse(status_code=500, content={
         "success": False,
         "error": "Internal server error",
+        "detail": "An unexpected error occurred.",
         "engine": "ILRMF v1.0",
     })
 
 
-# ── CORS — FIXED: Use list of origins, not callable ─────────
-settings = get_settings()
-
-# Parse allowed origins from environment variable
-origins_list = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
-
-# Always include common Vercel patterns for safety
-default_origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-all_origins = list(set(origins_list + default_origins))
-
+# ── CORS — FIXED: List-based origins ────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=all_origins,
+    allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
@@ -69,21 +66,22 @@ app.add_middleware(
 
 # ── Rate Limit + Security Headers Middleware ──────────────────
 @app.middleware("http")
-async def mw(req: Request, call_next):
+async def middleware_stack(request: Request, call_next):
     start = time.time()
 
     # Rate limit
-    if req.url.path.startswith("/api"):
-        cid = req.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        if not cid:
-            cid = req.client.host if req.client else "unknown"
-        if rate_limiter.is_rate_limited(cid):
+    if request.url.path.startswith("/api"):
+        client_id = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if not client_id:
+            client_id = request.client.host if request.client else "unknown"
+        if rate_limiter.is_rate_limited(client_id):
             return JSONResponse(status_code=429, content={
                 "error": "Rate limit exceeded",
+                "retry_after": "60 seconds",
                 "engine": "ILRMF v1.0",
             })
 
-    response = await call_next(req)
+    response = await call_next(request)
     elapsed = time.time() - start
 
     # Security headers
@@ -91,6 +89,7 @@ async def mw(req: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["X-SAIF-Creator"] = "Md-Nazmul-Islam-Bijoy-NB-TECH"
     response.headers["X-ILRMF-Engine"] = "v1.0"
     response.headers["X-Process-Time"] = f"{elapsed:.4f}s"
