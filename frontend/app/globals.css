@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+:root { --bg: #0a0f1c; --surface: #111827; --border: #1e293b; }
+body { background: var(--bg); color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+.saif-card { @apply bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6; }
+.saif-btn { @apply px-4 py-2 rounded-lg font-medium transition-all; }
+.saif-btn-primary { @apply bg-blue-600 hover:bg-blue-700 text-white; }
+.saif-btn-secondary { @apply bg-gray-700 hover:bg-gray-600 text-gray-200; }
+.saif-input { @apply w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-3 text-white outline-none focus:border-blue-500; }
