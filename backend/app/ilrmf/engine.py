@@ -125,7 +125,7 @@ class ILRMFEngine:
         parsed["governance"]["phase"] = phase
         parsed["governance"]["aiProvider"] = self._provider
 
-        claim_value = float(dispute.get("value") or 0)
+                claim_value = float(dispute.get("value") or 0)
         if claim_value <= 10000:
             court = "Small Claims Track"
         elif claim_value <= 25000:
@@ -135,6 +135,45 @@ class ILRMFEngine:
         else:
             court = "High Court (Kings Bench Division)"
         parsed["governance"]["courtTrack"] = court
+
+        # ==========================================================
+        # FIX: Downstream Probability & Relief Auto-Population
+        # ==========================================================
+        issues = parsed.get("issues", [])
+        any_void = any("VOID" in str(issue.get("verdict", "")) for issue in issues)
+        any_likely_void = any("LIKELY VOID" in str(issue.get("verdict", "")) for issue in issues)
+        
+        # 1. Probability Calibration (Downstream of FJR Verdict)
+        if any_void:
+            probability = 65  # Baseline for VOID clauses
+            # If UCTA s.2(1) applies (personal injury), it's an absolute bar
+            has_personal_injury = any("s.2(1)" in str(issue.get("law", "")) for issue in issues)
+            if has_personal_injury:
+                probability = 95
+            # Upgrade if consumer/vulnerable
+            if dispute.get("contractCategory") == "B2C" or dispute.get("consumerVulnerable"):
+                probability = min(95, probability + 15)
+        elif any_likely_void:
+            probability = 50
+        else:
+            probability = 15  # Low probability if clause is enforceable
+
+        # 2. Relief Auto-Population
+        if any_void or any_likely_void:
+            primary_relief = "Declaration that clause is void and unenforceable"
+            secondary_relief = "Damages for breach of contract / negligence"
+        else:
+            primary_relief = "N/A"
+            secondary_relief = "N/A"
+
+        # Map to frontend requirements (relief.court, relief.probability, etc.)
+        parsed["relief"] = {
+            "primary": primary_relief,
+            "secondary": secondary_relief,
+            "damages": f"£{claim_value:,.0f}" if claim_value > 0 else "TBD",
+            "court": court,  # Connects the calculated court to the frontend
+            "probability": probability
+        }
 
         logger.info(f"ILRMF Complete: {aid} | Hallucination={hallucination}")
 
