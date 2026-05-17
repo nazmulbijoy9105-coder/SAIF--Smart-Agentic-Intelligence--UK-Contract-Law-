@@ -62,7 +62,7 @@ class ILRMFEngine:
                 self._gemini_model = None
         return self._gemini_model
 
-    async def assess(self, dispute: dict, phase: int = 1) -> dict:
+        async def assess(self, dispute: dict, phase: int = 1) -> dict:
         phase = max(1, min(phase, 4))
         aid = f"ILRMF-{uuid.uuid4().hex[:12].upper()}"
         logger.info(f"ILRMF Assessment: {aid} | Phase={phase} | Provider={self._provider}")
@@ -125,7 +125,7 @@ class ILRMFEngine:
         parsed["governance"]["phase"] = phase
         parsed["governance"]["aiProvider"] = self._provider
 
-                claim_value = float(dispute.get("value") or 0)
+        claim_value = float(dispute.get("value") or 0)
         if claim_value <= 10000:
             court = "Small Claims Track"
         elif claim_value <= 25000:
