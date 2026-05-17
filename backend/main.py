@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import time
 import traceback
 
@@ -30,6 +32,38 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+# 422 Validation Error Handler - Shows exactly which field failed
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = []
+    for error in exc.errors():
+        field = ".".join(str(loc) for loc in error.get("loc", []))
+        msg = error.get("msg", "Invalid value")
+        errors.append({"field": field, "message": msg})
+    logger.error(f"Validation error: {errors}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "success": False,
+            "error": "Validation failed",
+            "details": errors,
+            "engine": "ILRMF v1.0",
+        },
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "error": exc.detail,
+            "engine": "ILRMF v1.0",
+        },
+    )
 
 
 @app.exception_handler(Exception)

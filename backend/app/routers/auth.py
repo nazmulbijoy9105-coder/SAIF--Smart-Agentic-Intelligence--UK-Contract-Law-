@@ -1,9 +1,9 @@
 """
-SAIF Auth Router - Fixed 422 errors
+SAIF Auth Router - No EmailStr (fixes 422)
 Creator: Md Nazmul Islam (Bijoy) | NB TECH
 """
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from app.db.supabase_client import supabase_db
 from app.utils.logger import logger
 
@@ -11,23 +11,23 @@ router = APIRouter()
 
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(..., min_length=3, max_length=200)
     password: str = Field(..., min_length=6, max_length=128)
     full_name: str = Field(..., min_length=1, max_length=200)
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
+    email: str = Field(..., min_length=3, max_length=200)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 @router.post("/register")
 async def register(req: RegisterRequest, request: Request):
     try:
         result = await supabase_db.register(
-            email=req.email,
+            email=req.email.strip(),
             password=req.password,
-            full_name=req.full_name,
+            full_name=req.full_name.strip(),
         )
         user = result.get("user")
         session = result.get("session")
@@ -60,7 +60,7 @@ async def register(req: RegisterRequest, request: Request):
 async def login(req: LoginRequest, request: Request):
     try:
         result = await supabase_db.login(
-            email=req.email,
+            email=req.email.strip(),
             password=req.password,
         )
         session = result.get("session")
