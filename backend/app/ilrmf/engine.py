@@ -62,7 +62,7 @@ class ILRMFEngine:
                 self._gemini_model = None
         return self._gemini_model
 
-        async def assess(self, dispute: dict, phase: int = 1) -> dict:
+    async def assess(self, dispute: dict, phase: int = 1) -> dict:
         phase = max(1, min(phase, 4))
         aid = f"ILRMF-{uuid.uuid4().hex[:12].upper()}"
         logger.info(f"ILRMF Assessment: {aid} | Phase={phase} | Provider={self._provider}")
