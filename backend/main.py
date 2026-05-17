@@ -21,6 +21,8 @@ from app.routers import assess, auth, payment, health, admin
 async def lifespan(application: FastAPI):
     settings = get_settings()
     logger.info(f"SAIF Starting - ENV={settings.ENVIRONMENT}")
+    logger.info(f"ALLOWED_ORIGINS = {settings.ALLOWED_ORIGINS}")
+    logger.info(f"allowed_origins_list = {settings.allowed_origins_list}")
     yield
     logger.info("SAIF Shutdown")
 
@@ -34,7 +36,32 @@ app = FastAPI(
 )
 
 
-# 422 Validation Error Handler - Shows exactly which field failed
+# CORS - MUST BE FIRST MIDDLEWARE
+# Allow all origins temporarily to debug, then restrict
+all_origins = [
+    "https://saif-smart-agentic-intelligence-uk.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+# Also add any origins from environment variable
+for origin in settings.allowed_origins_list:
+    if origin not in all_origins:
+        all_origins.append(origin)
+
+logger.info(f"All CORS origins: {all_origins}")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=all_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Request-ID", "X-Process-Time", "X-ILRMF-Engine"],
+)
+
+
+# Validation Error Handler
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = []
@@ -49,43 +76,33 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "success": False,
             "error": "Validation failed",
             "details": errors,
-            "engine": "ILRMF v1.0",
         },
     )
 
 
+# HTTP Exception Handler
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "success": False,
-            "error": exc.detail,
-            "engine": "ILRMF v1.0",
-        },
+        content={"success": False, "error": exc.detail},
     )
 
 
+# Global Exception Handler - catches ALL errors
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"UNHANDLED: {type(exc).__name__}: {exc}")
-    return JSONResponse(status_code=500, content={
-        "success": False,
-        "error": "Internal server error",
-    })
-
-
-# CORS
-origins = settings.allowed_origins_list
-logger.info(f"CORS Origins: {origins}")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    error_detail = f"{type(exc).__name__}: {str(exc)}"
+    logger.error(f"UNHANDLED: {error_detail}")
+    logger.error(traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "error": "Internal server error",
+            "detail": error_detail,
+        },
+    )
 
 
 # Rate Limit + Security Headers

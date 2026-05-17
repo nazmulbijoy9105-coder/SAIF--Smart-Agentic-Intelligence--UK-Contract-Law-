@@ -1,5 +1,5 @@
 """
-SAIF Auth Router - No EmailStr (fixes 422)
+SAIF Auth Router - Full debug logging
 Creator: Md Nazmul Islam (Bijoy) | NB TECH
 """
 from fastapi import APIRouter, HTTPException, Request
@@ -23,6 +23,8 @@ class LoginRequest(BaseModel):
 
 @router.post("/register")
 async def register(req: RegisterRequest, request: Request):
+    logger.info(f"Register attempt: email={req.email}")
+
     try:
         result = await supabase_db.register(
             email=req.email.strip(),
@@ -32,8 +34,10 @@ async def register(req: RegisterRequest, request: Request):
         user = result.get("user")
         session = result.get("session")
 
+        logger.info(f"Register result: user={user.id if user else None}, session={bool(session)}")
+
         if not user:
-            raise HTTPException(status_code=400, detail="Registration failed")
+            raise HTTPException(status_code=400, detail="Registration failed - no user returned")
 
         access_token = None
         if session:
@@ -50,14 +54,26 @@ async def register(req: RegisterRequest, request: Request):
         raise
     except Exception as e:
         error_msg = str(e)
+        logger.error(f"Registration error FULL: {error_msg}")
+
+        # Parse common Supabase errors
         if "already registered" in error_msg.lower():
             raise HTTPException(status_code=400, detail="Email already registered")
-        logger.error(f"Registration error: {error_msg}")
-        raise HTTPException(status_code=400, detail=error_msg)
+        if "password" in error_msg.lower() and "weak" in error_msg.lower():
+            raise HTTPException(status_code=400, detail="Password too weak. Use 6+ characters.")
+        if "email not confirmed" in error_msg.lower():
+            raise HTTPException(status_code=400, detail="Please confirm your email first")
+        if "rate limit" in error_msg.lower():
+            raise HTTPException(status_code=429, detail="Too many attempts. Wait a minute.")
+
+        # Return the actual error for debugging
+        raise HTTPException(status_code=400, detail=f"Registration failed: {error_msg}")
 
 
 @router.post("/login")
 async def login(req: LoginRequest, request: Request):
+    logger.info(f"Login attempt: email={req.email}")
+
     try:
         result = await supabase_db.login(
             email=req.email.strip(),
@@ -86,12 +102,16 @@ async def login(req: LoginRequest, request: Request):
         raise
     except Exception as e:
         error_msg = str(e)
+        logger.error(f"Login error FULL: {error_msg}")
+
         if "invalid login" in error_msg.lower():
             raise HTTPException(status_code=401, detail="Invalid email or password")
         if "email not confirmed" in error_msg.lower():
             raise HTTPException(status_code=401, detail="Please confirm your email first")
-        logger.error(f"Login error: {error_msg}")
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        if "rate limit" in error_msg.lower():
+            raise HTTPException(status_code=429, detail="Too many attempts. Wait a minute.")
+
+        raise HTTPException(status_code=401, detail=f"Login failed: {error_msg}")
 
 
 @router.get("/me")
