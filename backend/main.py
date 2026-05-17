@@ -21,8 +21,6 @@ from app.routers import assess, auth, payment, health, admin
 async def lifespan(application: FastAPI):
     settings = get_settings()
     logger.info(f"SAIF Starting - ENV={settings.ENVIRONMENT}")
-    logger.info(f"ALLOWED_ORIGINS = {settings.ALLOWED_ORIGINS}")
-    logger.info(f"allowed_origins_list = {settings.allowed_origins_list}")
     yield
     logger.info("SAIF Shutdown")
 
@@ -36,24 +34,16 @@ app = FastAPI(
 )
 
 
-# CORS - MUST BE FIRST MIDDLEWARE
-# Allow all origins temporarily to debug, then restrict
-all_origins = [
+# CORS - Hardcoded origins for reliability
+ALLOWED_ORIGINS = [
     "https://saif-smart-agentic-intelligence-uk.vercel.app",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
 
-# Also add any origins from environment variable
-for origin in settings.allowed_origins_list:
-    if origin not in all_origins:
-        all_origins.append(origin)
-
-logger.info(f"All CORS origins: {all_origins}")
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=all_origins,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,7 +51,7 @@ app.add_middleware(
 )
 
 
-# Validation Error Handler
+# Error handlers that return CORS-compatible responses
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = []
@@ -70,44 +60,36 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         msg = error.get("msg", "Invalid value")
         errors.append({"field": field, "message": msg})
     logger.error(f"Validation error: {errors}")
-    return JSONResponse(
-        status_code=422,
-        content={
-            "success": False,
-            "error": "Validation failed",
-            "details": errors,
-        },
-    )
+    return JSONResponse(status_code=422, content={
+        "success": False,
+        "error": "Validation failed",
+        "details": errors,
+    })
 
 
-# HTTP Exception Handler
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"success": False, "error": exc.detail},
-    )
+    return JSONResponse(status_code=exc.status_code, content={
+        "success": False,
+        "error": exc.detail,
+    })
 
 
-# Global Exception Handler - catches ALL errors
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     error_detail = f"{type(exc).__name__}: {str(exc)}"
     logger.error(f"UNHANDLED: {error_detail}")
     logger.error(traceback.format_exc())
-    return JSONResponse(
-        status_code=500,
-        content={
-            "success": False,
-            "error": "Internal server error",
-            "detail": error_detail,
-        },
-    )
+    return JSONResponse(status_code=500, content={
+        "success": False,
+        "error": "Internal server error",
+        "detail": error_detail,
+    })
 
 
-# Rate Limit + Security Headers
+# Security headers
 @app.middleware("http")
-async def middleware_stack(request: Request, call_next):
+async def add_security_headers(request: Request, call_next):
     start = time.time()
 
     if request.url.path.startswith("/api"):
@@ -119,12 +101,8 @@ async def middleware_stack(request: Request, call_next):
 
     response = await call_next(request)
     elapsed = time.time() - start
-
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Process-Time"] = f"{elapsed:.4f}s"
     response.headers["X-ILRMF-Engine"] = "v1.0"
-
     return response
 
 
@@ -141,6 +119,5 @@ async def root():
         "service": "SAIF",
         "engine": "ILRMF v1.0",
         "creator": "Md Nazmul Islam (Bijoy)",
-        "org": "NB TECH Bangladesh",
         "status": "production",
     }

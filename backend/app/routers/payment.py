@@ -1,5 +1,5 @@
 """
-SAIF Payment Router — Stripe UK
+SAIF Payment Router
 Creator: Md Nazmul Islam (Bijoy) | NB TECH
 """
 from fastapi import APIRouter, HTTPException, Request, Header
@@ -28,7 +28,7 @@ class CheckoutRequest(BaseModel):
 @router.post("/checkout")
 async def create_checkout(req: CheckoutRequest, request: Request):
     user = await get_current_user(request)
-    user_id = user["id"]
+    user_id = user.get("id", "")
     settings = get_settings()
 
     plan_config = PLANS.get(req.plan)
@@ -45,7 +45,7 @@ async def create_checkout(req: CheckoutRequest, request: Request):
                     "currency": settings.STRIPE_CURRENCY,
                     "product_data": {
                         "name": plan_config["name"],
-                        "description": f"{plan_config['credits']} assessments — ILRMF Engine",
+                        "description": f"{plan_config["credits"]} assessments",
                     },
                     "unit_amount": plan_config["amount_pence"],
                 },
@@ -54,72 +54,58 @@ async def create_checkout(req: CheckoutRequest, request: Request):
             success_url=req.success_url,
             cancel_url=req.cancel_url,
             client_reference_id=user_id,
-            metadata={
-                "user_id": user_id,
-                "plan": req.plan,
-                "credits": plan_config["credits"],
-            },
+            metadata={"user_id": user_id, "plan": req.plan, "credits": plan_config["credits"]},
         )
-        return {"success": True, "url": session.url, "session_id": session.id}
+        return {"success": True, "url": session.url}
     except Exception as e:
         logger.error(f"Checkout error: {e}")
-        raise HTTPException(status_code=500, detail="Checkout creation failed")
+        raise HTTPException(status_code=500, detail="Checkout failed")
 
 
 @router.post("/webhook")
-async def stripe_webhook(
-    request: Request,
-    stripe_signature: str = Header(alias="Stripe-Signature"),
-):
+async def stripe_webhook(request: Request, stripe_signature: str = Header(alias="Stripe-Signature")):
     settings = get_settings()
     payload = await request.body()
-
     try:
         stripe.api_key = settings.STRIPE_SECRET_KEY
-        event = stripe.Webhook.construct_event(
-            payload, stripe_signature, settings.STRIPE_WEBHOOK_SECRET
-        )
-    except Exception as e:
-        logger.error(f"Webhook verification failed: {e}")
+        event = stripe.Webhook.construct_event(payload, stripe_signature, settings.STRIPE_WEBHOOK_SECRET)
+        if event.get("type") == "checkout.session.completed":
+            sess = event["data"]["object"]
+            uid = sess.get("client_reference_id")
+            meta = sess.get("metadata", {})
+            credits = int(meta.get("credits", 0))
+            plan = meta.get("plan", "pro")
+            if uid and credits > 0:
+                profile = await supabase_db.get_profile(uid)
+                current = profile.get("credits_remaining", 0) if profile else 0
+                await supabase_db.set_credits(uid, current + credits, plan)
+        return {"received": True}
+    except Exception:
         raise HTTPException(status_code=400, detail="Invalid signature")
-
-    event_type = event.get("type", "")
-    logger.info(f"Stripe webhook: {event_type}")
-
-    if event_type == "checkout.session.completed":
-        session = event["data"]["object"]
-        user_id = session.get("client_reference_id")
-        metadata = session.get("metadata", {})
-        credits = int(metadata.get("credits", 0))
-        plan = metadata.get("plan", "pro")
-
-        if user_id and credits > 0:
-            profile = await supabase_db.get_profile(user_id)
-            current = profile.get("credits_remaining", 0) if profile else 0
-            await supabase_db.set_credits(user_id, current + credits, plan)
-            logger.info(f"✅ Credits added: user={user_id} +{credits}")
-
-    return {"received": True}
 
 
 @router.get("/credits")
 async def get_credits(request: Request):
-    user = await get_current_user(request)
-    profile = await supabase_db.get_profile(user["id"])
-    return {
-        "success": True,
-        "credits_remaining": profile.get("credits_remaining", 0) if profile else 0,
-        "plan": profile.get("plan", "free") if profile else "free",
-    }
+    try:
+        user = await get_current_user(request)
+        user_id = user.get("id", "")
+        profile = await supabase_db.get_profile(user_id)
+        return {
+            "success": True,
+            "credits_remaining": profile.get("credits_remaining", 0) if profile else 0,
+            "plan": profile.get("plan", "free") if profile else "free",
+        }
+    except Exception as e:
+        logger.error(f"Credits error: {e}")
+        return {"success": True, "credits_remaining": 0, "plan": "free"}
 
 
 @router.get("/plans")
 async def get_plans():
     return {
         "plans": [
-            {"id": "free", "name": "SAIF Free", "credits": 3, "price": "£0"},
-            {"id": "pro", "name": "SAIF Pro", "credits": 50, "price": "£19.99"},
-            {"id": "enterprise", "name": "SAIF Enterprise", "credits": 999, "price": "£99.99"},
+            {"id": "free", "name": "SAIF Free", "credits": 3, "price": "0"},
+            {"id": "pro", "name": "SAIF Pro", "credits": 50, "price": "19.99"},
+            {"id": "enterprise", "name": "SAIF Enterprise", "credits": 999, "price": "99.99"},
         ],
-        "engine": "ILRMF v1.0",
     }
