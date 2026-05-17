@@ -1,5 +1,5 @@
 """
-SAIF Auth Router
+SAIF Auth Router - Fixed 401 errors
 Creator: Md Nazmul Islam (Bijoy) | NB TECH
 """
 from fastapi import APIRouter, HTTPException, Request
@@ -18,12 +18,10 @@ class RegisterRequest(BaseModel):
 
     @validator("password")
     def validate_password(cls, v):
-        if not re.search(r'[A-Z]', v):
+        if not re.search(r"[A-Z]", v):
             raise ValueError("Must contain uppercase letter")
-        if not re.search(r'[0-9]', v):
+        if not re.search(r"[0-9]", v):
             raise ValueError("Must contain a number")
-        if not re.search(r'[^A-Za-z0-9]', v):
-            raise ValueError("Must contain a special character")
         return v
 
 
@@ -42,16 +40,29 @@ async def register(req: RegisterRequest, request: Request):
         )
         user = result.get("user")
         session = result.get("session")
+
+        if not user:
+            raise HTTPException(status_code=400, detail="Registration failed")
+
+        access_token = None
+        if session:
+            access_token = session.access_token
+
         return {
             "success": True,
-            "message": "Registration successful. Verify your email.",
-            "user_id": user.id if user else None,
-            "access_token": session.access_token if session else None,
+            "message": "Registration successful",
+            "user_id": user.id,
+            "access_token": access_token,
             "engine": "ILRMF v1.0",
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Registration error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        error_msg = str(e)
+        if "already registered" in error_msg.lower():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        logger.error(f"Registration error: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
 
 
 @router.post("/login")
@@ -65,7 +76,7 @@ async def login(req: LoginRequest, request: Request):
         user = result.get("user")
 
         if not session:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            raise HTTPException(status_code=401, detail="Invalid email or password")
 
         profile = await supabase_db.get_profile(user.id)
 
@@ -75,6 +86,7 @@ async def login(req: LoginRequest, request: Request):
             "token_type": "bearer",
             "user_id": user.id,
             "email": user.email,
+            "full_name": profile.get("full_name", "") if profile else "",
             "credits_remaining": profile.get("credits_remaining", 0) if profile else 0,
             "plan": profile.get("plan", "free") if profile else "free",
             "engine": "ILRMF v1.0",
@@ -82,8 +94,13 @@ async def login(req: LoginRequest, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Login error: {e}")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        error_msg = str(e)
+        if "invalid login" in error_msg.lower() or "invalid credentials" in error_msg.lower():
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        if "email not confirmed" in error_msg.lower():
+            raise HTTPException(status_code=401, detail="Please confirm your email first. Check your inbox.")
+        logger.error(f"Login error: {error_msg}")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
 
 @router.get("/me")
