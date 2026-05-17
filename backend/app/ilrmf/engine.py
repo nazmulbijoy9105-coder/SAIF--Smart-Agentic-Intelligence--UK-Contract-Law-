@@ -1,22 +1,15 @@
 """
-SAIF ILRMF Core Engine
+SAIF ILRMF Core Engine - Groq + Gemini support
 Creator: Md Nazmul Islam (Bijoy) | NB TECH | ILRMF
 """
 import json
 import re
 import uuid
 import time
-import google.generativeai as genai
-from app.ilrmf.fjr_engine import fjr_engine
-from app.validators.citation_checker import citation_checker
-from app.corpus.phase1_cases import PHASE1_CASES
-from app.corpus.statutes import STATUTES
 from app.utils.config import get_settings
 from app.utils.logger import logger
 
 settings = get_settings()
-if settings.GEMINI_API_KEY:
-    genai.configure(api_key=settings.GEMINI_API_KEY)
 
 SYSTEM_PROMPT = (
     "YOU ARE SAIF - UK Contract Law AI powered by ILRMF. "
@@ -33,31 +26,64 @@ SYSTEM_PROMPT = (
 
 class ILRMFEngine:
     def __init__(self):
-        self._model = None
+        self._groq_client = None
+        self._gemini_model = None
+        self._provider = settings.AI_PROVIDER
 
     @property
-    def model(self):
-        if not self._model:
-            self._model = genai.GenerativeModel(
-                model_name=settings.GEMINI_MODEL,
-                generation_config=genai.GenerationConfig(
-                    temperature=settings.GEMINI_TEMPERATURE,
-                    max_output_tokens=settings.GEMINI_MAX_TOKENS,
-                ),
-            )
-        return self._model
+    def groq_client(self):
+        if self._groq_client is None:
+            try:
+                from groq import Groq
+                self._groq_client = Groq(api_key=settings.GROQ_API_KEY)
+                logger.info("Groq client initialized")
+            except Exception as e:
+                logger.error(f"Groq init failed: {e}")
+                self._groq_client = None
+        return self._groq_client
+
+    @property
+    def gemini_model(self):
+        if self._gemini_model is None:
+            try:
+                import google.generativeai as genai
+                if settings.GEMINI_API_KEY:
+                    genai.configure(api_key=settings.GEMINI_API_KEY)
+                    self._gemini_model = genai.GenerativeModel(
+                        model_name=settings.GEMINI_MODEL,
+                        generation_config=genai.GenerationConfig(
+                            temperature=settings.GEMINI_TEMPERATURE,
+                            max_output_tokens=settings.GEMINI_MAX_TOKENS,
+                        ),
+                    )
+                    logger.info("Gemini model initialized (fallback)")
+            except Exception as e:
+                logger.error(f"Gemini init failed: {e}")
+                self._gemini_model = None
+        return self._gemini_model
 
     async def assess(self, dispute: dict, phase: int = 1) -> dict:
         phase = max(1, min(phase, 4))
         aid = f"ILRMF-{uuid.uuid4().hex[:12].upper()}"
-        logger.info(f"ILRMF Assessment: {aid} | Phase={phase}")
+        logger.info(f"ILRMF Assessment: {aid} | Phase={phase} | Provider={self._provider}")
 
-        raw_result = await self._call_gemini(dispute, phase)
+        from app.ilrmf.fjr_engine import fjr_engine
+        from app.validators.citation_checker import citation_checker
+        from app.corpus.phase1_cases import PHASE1_CASES
+        from app.corpus.statutes import STATUTES
+
+        cases_str = ", ".join([f"{c.name} {c.citation}" for c in PHASE1_CASES])
+        stat_str = ", ".join([f"{s.act} {s.section}" for s in STATUTES])
+        prompt = SYSTEM_PROMPT.format(cases=cases_str, statutes=stat_str)
+        prompt += "\n\nDISPUTE: " + json.dumps(dispute, default=str)
+
+        raw_result = await self._call_ai(prompt)
         if not raw_result.get("success"):
             return raw_result
 
         parsed = raw_result["data"]
 
+        # FJR integration
         for issue in parsed.get("issues", []):
             clause = dispute.get("disputedClause", "") or issue.get("issue", "")
             try:
@@ -97,6 +123,7 @@ class ILRMFEngine:
         parsed["governance"]["creator"] = "Md Nazmul Islam (Bijoy)"
         parsed["governance"]["org"] = "NB TECH Bangladesh"
         parsed["governance"]["phase"] = phase
+        parsed["governance"]["aiProvider"] = self._provider
 
         claim_value = float(dispute.get("value") or 0)
         if claim_value <= 10000:
@@ -111,36 +138,68 @@ class ILRMFEngine:
 
         logger.info(f"ILRMF Complete: {aid} | Hallucination={hallucination}")
 
-        return {
-            "success": True,
-            "data": parsed,
-            "assessment_id": aid,
-            "phase": phase,
-        }
+        return {"success": True, "data": parsed, "assessment_id": aid, "phase": phase}
 
-    async def _call_gemini(self, dispute: dict, phase: int) -> dict:
-        cases_str = ", ".join([f"{c.name} {c.citation}" for c in PHASE1_CASES])
-        stat_str = ", ".join([f"{s.act} {s.section}" for s in STATUTES])
-        prompt = SYSTEM_PROMPT.format(cases=cases_str, statutes=stat_str)
-        prompt += "\n\nDISPUTE: " + json.dumps(dispute, default=str)
+    async def _call_ai(self, prompt: str) -> dict:
+        # Try Groq first, then Gemini fallback
+        if self._provider == "groq" and self.groq_client:
+            result = await self._call_groq(prompt)
+            if result.get("success"):
+                return result
+            logger.warning("Groq failed, trying Gemini fallback")
+        
+        if self.gemini_model:
+            result = await self._call_gemini(prompt)
+            if result.get("success"):
+                return result
+            logger.warning("Gemini also failed")
 
+        return {"success": False, "error": "All AI providers failed. Please try again in a minute."}
+
+    async def _call_groq(self, prompt: str) -> dict:
         for attempt in range(3):
             try:
-                resp = self.model.generate_content(prompt)
-                raw = resp.text.strip()
+                response = self.groq_client.chat.completions.create(
+                    model=settings.GROQ_MODEL,
+                    messages=[
+                        {"role": "system", "content": "Return ONLY valid JSON. No markdown."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.1,
+                    max_tokens=8192,
+                )
+                raw = response.choices[0].message.content.strip()
+                if not raw:
+                    raise ValueError("Empty response")
+                parsed = self._parse_json(raw)
+                logger.info(f"Groq OK: attempt={attempt+1} chars={len(raw)}")
+                return {"success": True, "data": parsed}
+            except Exception as e:
+                logger.warning(f"Groq error (attempt {attempt+1}): {e}")
+                if "429" in str(e) or "rate" in str(e).lower():
+                    time.sleep(5 * (attempt + 1))
+                else:
+                    if attempt >= 2:
+                        break
+
+        return {"success": False, "error": "Groq failed after 3 attempts"}
+
+    async def _call_gemini(self, prompt: str) -> dict:
+        for attempt in range(2):
+            try:
+                response = self.gemini_model.generate_content(prompt)
+                raw = response.text.strip()
                 if not raw:
                     raise ValueError("Empty response")
                 parsed = self._parse_json(raw)
                 logger.info(f"Gemini OK: attempt={attempt+1} chars={len(raw)}")
                 return {"success": True, "data": parsed}
-            except json.JSONDecodeError as e:
-                logger.warning(f"JSON error (attempt {attempt+1}): {e}")
             except Exception as e:
                 logger.warning(f"Gemini error (attempt {attempt+1}): {e}")
-            if attempt < 2:
-                time.sleep(2 * (attempt + 1))
+                if "429" in str(e):
+                    time.sleep(10 * (attempt + 1))
 
-        return {"success": False, "error": "Gemini failed after 3 attempts"}
+        return {"success": False, "error": "Gemini failed"}
 
     def _parse_json(self, raw: str) -> dict:
         try:

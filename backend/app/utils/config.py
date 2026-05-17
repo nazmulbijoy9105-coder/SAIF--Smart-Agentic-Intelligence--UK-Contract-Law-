@@ -1,5 +1,5 @@
 """
-SAIF Configuration — Validated at startup
+SAIF Configuration
 Creator: Md Nazmul Islam (Bijoy) | NB TECH
 """
 from pydantic_settings import BaseSettings
@@ -10,13 +10,12 @@ from app.utils.logger import logger
 
 class Settings(BaseSettings):
     APP_NAME: str = "SAIF"
-    ENVIRONMENT: str = Field(
-        default="development",
-        pattern="^(development|staging|production)$",
-    )
-    DEBUG: bool = False
+    ENVIRONMENT: str = Field(default="development", pattern="^(development|staging|production)$")
 
-    # Gemini
+    # AI Engine - Groq (primary) or Gemini (fallback)
+    AI_PROVIDER: str = Field(default="groq", pattern="^(groq|gemini)$")
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
     GEMINI_MAX_TOKENS: int = 8192
@@ -42,12 +41,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: str = "http://localhost:3000"
     TRUSTED_HOSTS: str = "localhost"
 
-    model_config = {
-        "env_file": ".env",
-        "env_file_encoding": "utf-8",
-        "case_sensitive": True,
-        "extra": "ignore",
-    }
+    model_config = {"env_file": ".env", "case_sensitive": True, "extra": "ignore"}
 
     @property
     def is_production(self) -> bool:
@@ -55,13 +49,7 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins_list(self) -> list:
-        """Parse ALLOWED_ORIGINS into a clean list."""
-        origins = []
-        for o in self.ALLOWED_ORIGINS.split(","):
-            o = o.strip()
-            if o:
-                origins.append(o)
-        # Always include localhost for development
+        origins = [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
         if "http://localhost:3000" not in origins:
             origins.append("http://localhost:3000")
         return origins
@@ -71,8 +59,8 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     try:
         s = Settings()
-        logger.info(f"✅ Config loaded — ENV={s.ENVIRONMENT}")
+        logger.info(f"Config loaded - ENV={s.ENVIRONMENT} AI={s.AI_PROVIDER}")
         return s
     except Exception as e:
-        logger.critical(f"❌ CONFIG FAILED: {e}")
+        logger.critical(f"CONFIG FAILED: {e}")
         raise SystemExit(1)
