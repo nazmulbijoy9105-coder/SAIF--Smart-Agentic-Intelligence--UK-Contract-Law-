@@ -1,10 +1,9 @@
 """
-SAIF Auth Router - Fixed 401 errors
+SAIF Auth Router - Fixed 422 errors
 Creator: Md Nazmul Islam (Bijoy) | NB TECH
 """
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, EmailStr, Field, validator
-import re
+from pydantic import BaseModel, EmailStr, Field
 from app.db.supabase_client import supabase_db
 from app.utils.logger import logger
 
@@ -13,16 +12,8 @@ router = APIRouter()
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=8, max_length=128)
-    full_name: str = Field(..., min_length=2, max_length=100)
-
-    @validator("password")
-    def validate_password(cls, v):
-        if not re.search(r"[A-Z]", v):
-            raise ValueError("Must contain uppercase letter")
-        if not re.search(r"[0-9]", v):
-            raise ValueError("Must contain a number")
-        return v
+    password: str = Field(..., min_length=6, max_length=128)
+    full_name: str = Field(..., min_length=1, max_length=200)
 
 
 class LoginRequest(BaseModel):
@@ -95,10 +86,10 @@ async def login(req: LoginRequest, request: Request):
         raise
     except Exception as e:
         error_msg = str(e)
-        if "invalid login" in error_msg.lower() or "invalid credentials" in error_msg.lower():
+        if "invalid login" in error_msg.lower():
             raise HTTPException(status_code=401, detail="Invalid email or password")
         if "email not confirmed" in error_msg.lower():
-            raise HTTPException(status_code=401, detail="Please confirm your email first. Check your inbox.")
+            raise HTTPException(status_code=401, detail="Please confirm your email first")
         logger.error(f"Login error: {error_msg}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
