@@ -17,7 +17,7 @@ export default function AssessPage() {
     narrative: "",
     disputedClause: "",
     bargainingPower: "equal",
-    noticeAdequate: true,
+    noticeAdequate: false,
     standardForm: false,
     consumerVulnerable: false,
     allowsUnilateralVariation: false,

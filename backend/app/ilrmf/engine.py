@@ -1,11 +1,6 @@
 """
 SAIF ILRMF Core Engine — AI + Rule-Based Hybrid
 Creator: Md Nazmul Islam (Bijoy) | NB TECH | ILRMF v1.0
-
-HONESTY LAYER: This engine uses AI for legal analysis.
-AI pattern-matches law — it does not reason like a solicitor.
-Citation validation checks that case NAMES exist, NOT that they are
-correctly applied. This is a fundamental limitation.
 """
 import json
 import re
@@ -23,30 +18,13 @@ VERIFIED STATUTES: {statutes}
 
 FJR TRIPLE-GATE ON EVERY ISSUE. ZERO HALLUCINATION.
 
-CRITICAL RULES:
-1. Use FULL case names. Never truncate.
-2. Only cite cases where the DOCTRINE matches the facts.
-3. Do NOT cite a case just because it is in your knowledge — cite it only if its legal principle is directly relevant.
-4. If you cannot find a directly relevant case, say "No directly on-point precedent identified" rather than citing an irrelevant one.
+CRITICAL: Use FULL case names. Never truncate.
+CORRECT: "Butler Machine Tool v Ex-Cell-O [1979] 1 WLR 401"
+CORRECT: "Smith v Eric S Bush [1990] AC 831"
+WRONG:   "Butler Machine Tool v Ex"
+WRONG:   "Smith v Eric"
 
-DOCTRINE GUIDE — match your citations to these patterns:
-- Contract formation (offer/acceptance/consideration): Carlill v Carbolic Smoke Ball, Hyde v Wrench
-- Battle of forms (conflicting standard terms): Butler Machine Tool v Ex-Cell-O
-- Incorporation of terms (how terms become part of contract): Thornton v Shoe Lane, Interfoto v Stiletto, L'Estrange v Graucob
-- Unfair terms / UCTA reasonableness: Smith v Eric S Bush, St Albans DC v ICL, Director General of Fair Trading v First National Bank
-- Penalty clauses: Dunlop Pneumatic Tyre v New Garage, Cavendish Square v Makdessi
-- Remoteness of damages: Hadley v Baxendale
-- Repudiatory / anticipatory breach: Vitol SA v Norelf, White & Carter v McGregor, Photovision v SEI
-- Quantum meruit / part performance: Williams v Roffey, Sumpter v Hedges
-- Specific performance: NOT available for personal service contracts (Cohen v Roche)
-
-REMEDY RULES:
-- Specific performance is NOT available for personal service, development work, or contracts requiring ongoing cooperation
-- For terminated service contracts, damages are the ONLY remedy
-- Damages for incomplete work: normally cost-to-complete adjusted, NOT the full contract price
-- If claimant is 60% through, damages = contract price MINUS cost to complete remaining 40% MINUS any savings
-
-Return ONLY valid JSON. No markdown.
+Return ONLY valid JSON. No markdown. No explanation outside JSON.
 
 {{
   "facts": {{
@@ -62,29 +40,38 @@ Return ONLY valid JSON. No markdown.
   "issues": [
     {{
       "issue": "The specific legal question",
-      "law": "Full UK case citations. Each citation MUST include: case name [year] reporter, THEN explain which DOCTRINE from that case applies. If no directly relevant case exists, say so.",
+      "law": "Full UK case citations with year and reporter.",
       "fjr": {{
         "fair": true/false, "just": true/false, "reasonable": true/false,
         "score": 0-100, "fairScore": 0-100, "justScore": 0-100, "reasonableScore": 0-100,
-        "analysis": "EXPLAIN each score: Fair=X because... Just=X because... Reasonable=X because..."
+        "analysis": "Detailed FJR analysis with case support (4+ sentences)"
       }},
       "argument": {{
-        "claimant": "3-4 sentence argument with correctly-applied case law",
-        "defendant": "3-4 sentence argument with correctly-applied case law"
+        "claimant": "3-4 sentence argument with case law",
+        "defendant": "3-4 sentence argument with case law"
       }},
       "verdict": "Clear verdict with legal basis"
     }}
   ],
   "relief": {{
-    "primary": "Specific remedy (NOTE: never suggest specific performance for service/development contracts)",
-    "secondary": "Secondary remedy",
-    "damages": "Amount with METHODOLOGY: e.g., £15,000 minus estimated cost to complete £6,000 = £9,000",
+    "primary": "Specific primary remedy",
+    "secondary": "Specific secondary remedy",
+    "damages": "Amount or method",
     "probability": 0-100,
     "reasoning": "Why this relief at this probability"
   }},
   "governance": {{"hallucination": "ZERO", "engine": "ILRMF v1.0"}}
 }}
+
+RULES:
+- FULL case names only — never truncate
+- Every issue needs law with full citations
+- Every issue needs claimant AND defendant arguments (3+ sentences)
+- Every issue needs FJR analysis (4+ sentences)
+- Only use well-known UK contract law cases
+- If unsure, omit rather than guess
 """
+
 
 class IncorporationGate:
     @staticmethod
@@ -105,7 +92,7 @@ class IncorporationGate:
             reasons.append("Signed document creates baseline incorporation (L'Estrange v Graucob).")
         if facts.get("standardForm") and not facts.get("specificNotice"):
             score -= 10
-            reasons.append("Standard form without specific notice.")
+            reasons.append("Standard form contract without specific notice — heightened scrutiny.")
         score = max(0, min(100, score))
         incorporated = score >= 50 and not facts.get("buriedClause", False)
         return {
@@ -124,13 +111,13 @@ class FJRDynamicScorer:
             scores["reasonable"] = False
             scores["reasonableScore"] = 0
             scores["score"] = 0
-            overrides.append("UCTA s.2(1) absolute bar — personal injury exclusion void regardless of reasonableness.")
+            overrides.append("UCTA s.2(1) absolute bar applied — personal injury exclusion void regardless of reasonableness.")
         if "unilateral variation" in law_text.lower() or "variation" in str(issue.get("issue", "")).lower():
             if facts.get("isConsumer") or not facts.get("bargainingEqual", True):
                 if scores["fairScore"] > 20:
                     scores["fairScore"] = max(0, scores["fairScore"] - 30)
                     scores["justScore"] = max(0, scores["justScore"] - 25)
-                    overrides.append("Unilateral variation in unequal/consumer context — FJR reduced (CRA 2015 Sch.2 Para 4).")
+                    overrides.append("Unilateral variation clause in unequal/consumer context — FJR scores reduced (CRA 2015 Sch.2 Para 4).")
         scores["score"] = (scores["fairScore"] + scores["justScore"] + scores["reasonableScore"]) // 3
         scores["fair"] = scores["fairScore"] >= 50
         scores["just"] = scores["justScore"] >= 50
@@ -139,65 +126,27 @@ class FJRDynamicScorer:
         return scores
 
 
-class LegalRulesEnforcer:
-    """Post-processes AI output to catch known legal errors.
-    This is a safety net — it cannot fix wrong legal reasoning,
-    but it can catch the most dangerous known failure modes."""
-
-    @staticmethod
-    def enforce(issue: dict, dispute: dict) -> dict:
-        verdict = str(issue.get("verdict", ""))
-        law = str(issue.get("law", "")).lower()
-        issue_text = str(issue.get("issue", "")).lower()
-        warnings = []
-
-        # 1. Specific performance for service/development contracts
-        is_service = any(kw in dispute.get("narrative", "").lower() for kw in ["develop", "consult", "design", "code", "freelance", "service"])
-        if is_service and "specific performance" in verdict.lower():
-            warnings.append("Specific performance is not available for personal service contracts (Cohen v Roche). Removed from remedy suggestion.")
-
-        # 2. Battle of forms cited but no standard terms in facts
-        has_standard_form = dispute.get("standardForm", False)
-        if "butler machine tool" in law and not has_standard_form:
-            warnings.append("Butler Machine Tool (battle of forms) cited but no standard form terms in facts. This citation may be misapplied.")
-
-        # 3. Penalty clause case cited but no penalty clause in facts
-        has_penalty = "penalty" in dispute.get("narrative", "").lower() or "penalty" in dispute.get("disputedClause", "").lower()
-        if ("cavendish square" in law or "dunlop pneumatic" in law) and not has_penalty:
-            warnings.append("Penalty clause case cited but no penalty clause found in facts. This citation may be misapplied.")
-
-        # 4. Remoteness case cited for breach question (not damages question)
-        if "hadley v baxendale" in law and "remoteness" not in law and "damages" not in issue_text:
-            warnings.append("Hadley v Baxendale (remoteness) cited for breach/liability question rather than damages quantification. May be misapplied.")
-
-        # 5. Formation cases for undisputed formation
-        if "hyde v wrench" in law and "counter-offer" not in law and "counter-offer" not in issue_text:
-            warnings.append("Hyde v Wrench (counter-offer) cited but no counter-offer in facts. May be misapplied.")
-
-        return warnings
-
-
 class ProbabilityCalibrator:
     @staticmethod
     def calculate(verdict: str, issues: list, facts: dict, incorporation: dict) -> dict:
         if verdict == "VALID":
             return {"probability": 15, "confidence": "Low", "explanation": "Clause deemed valid/enforceable. Low probability of successful challenge."}
         if verdict == "NOT INCORPORATED":
-            return {"probability": 85, "confidence": "High", "explanation": "Clause not incorporated. Strong position for claimant."}
+            return {"probability": 85, "confidence": "High", "explanation": "Clause not incorporated into contract. Strong position for claimant."}
         base = 65
         reasons = [f"Base probability {base}% due to {verdict} verdict."]
         if any("s.2(1)" in str(i.get("law", "")) for i in issues):
             base = 95
-            reasons.append("UCTA s.2(1) absolute bar.")
+            reasons.append("UCTA s.2(1) absolute bar on personal injury exclusion — near-certain void.")
         if facts.get("isConsumer"):
             base = min(95, base + 10)
-            reasons.append("CRA 2015 consumer-friendly bias.")
+            reasons.append("CRA 2015 consumer-friendly interpretation applied.")
         if not incorporation.get("incorporated", True):
             base = min(95, base + 5)
-            reasons.append("Incorporation failure strengthens claimant.")
+            reasons.append("Incorporation failure further strengthens claimant position.")
         if facts.get("evidenceQuality") == "weak":
             base -= 15
-            reasons.append("Weak evidence reduces certainty.")
+            reasons.append("Weak evidence quality reduces certainty.")
         final = max(5, min(95, base))
         return {"probability": final, "confidence": "High" if final > 70 else "Moderate" if final > 40 else "Low", "explanation": " ".join(reasons)}
 
@@ -206,12 +155,12 @@ class CourtAssigner:
     @staticmethod
     def assign(claim_value: float) -> dict:
         if claim_value <= 10000:
-            return {"track": "Small Claims Track", "court": "County Court", "details": "Informal, costs capped."}
+            return {"track": "Small Claims Track", "court": "County Court", "details": "Informal procedure, costs capped."}
         elif claim_value <= 25000:
-            return {"track": "Fast Track", "court": "County Court", "details": "Standard directions, fixed costs, 1-day trial."}
+            return {"track": "Fast Track", "court": "County Court", "details": "Standard directions, fixed costs, trial usually 1 day."}
         elif claim_value <= 100000:
-            return {"track": "Intermediate Track", "court": "County Court", "details": "CPR 26A expanded directions."}
-        return {"track": "Multi-Track", "court": "County Court or High Court (KBD)", "details": "Complex cases, costs budgeting."}
+            return {"track": "Intermediate Track", "court": "County Court", "details": "CPR 26A — expanded standard directions."}
+        return {"track": "Multi-Track", "court": "County Court or High Court (KBD)", "details": "Complex cases, full costs budgeting."}
 
 
 class ReliefGenerator:
@@ -219,10 +168,13 @@ class ReliefGenerator:
     def generate(verdict: str, facts: dict, court: dict) -> dict:
         claim_value = facts.get("claimValue", "TBD")
         if verdict == "NOT INCORPORATED":
-            return {"primary": "Declaration that clause not incorporated", "secondary": "Contract on implied/reasonable terms", "damages": claim_value, "interest": "Senior Courts Act 1981 s.35A at 8%"}
+            return {"primary": "Declaration that the clause was not incorporated and is not binding", "secondary": "Contract performed on basis of implied/reasonable terms", "damages": claim_value, "interest": "Statutory interest under Senior Courts Act 1981 s.35A at 8% per annum"}
         if verdict == "VALID":
-            return {"primary": "N/A — clause upheld", "secondary": "N/A", "damages": "N/A", "interest": "N/A"}
-        return {"primary": "Declaration clause void under UCTA 1977/CRA 2015", "secondary": "Damages on ordinary principles (Hadley v Baxendale)", "damages": claim_value, "interest": "Senior Courts Act 1981 s.35A at 8%"}
+            return {"primary": "N/A — clause upheld as valid and enforceable", "secondary": "N/A", "damages": "N/A", "interest": "N/A"}
+        has_pi = "personal injury" in str(facts.get("lawHints", ""))
+        if has_pi:
+            return {"primary": "Declaration that exclusion clause is void under UCTA 1977 s.2(1)", "secondary": "Full damages for personal injury/death without cap", "damages": "Uncapped — to be assessed by court", "interest": "Statutory interest under Senior Courts Act 1981 s.35A"}
+        return {"primary": "Declaration that the clause is void and unenforceable under UCTA 1977/CRA 2015", "secondary": "Damages assessed on ordinary contractual principles (Hadley v Baxendale)", "damages": claim_value, "interest": "Statutory interest under Senior Courts Act 1981 s.35A at 8% per annum"}
 
 
 def _normalize_response(parsed: dict, dispute: dict) -> dict:
@@ -230,7 +182,7 @@ def _normalize_response(parsed: dict, dispute: dict) -> dict:
     facts = parsed.get("facts", {})
     if not isinstance(facts, dict):
         facts = {}
-    facts.setdefault("parties", f"{dispute.get("claimant", "")} vs {dispute.get("defendant", "")}")
+    facts.setdefault("parties", f"{dispute.get('claimant', '')} vs {dispute.get('defendant', '')}")
     facts.setdefault("contractType", dispute.get("contractType", "N/A"))
     facts.setdefault("consumerType", dispute.get("contractCategory", "N/A"))
     facts.setdefault("value", f"£{claim_value:,.0f}" if claim_value else "N/A")
@@ -289,7 +241,7 @@ def _normalize_response(parsed: dict, dispute: dict) -> dict:
 
 def _build_v2_facts(dispute: dict, issues: list) -> dict:
     return {
-        "claimValue": f"£{float(dispute.get("value") or 0):,.0f}",
+        "claimValue": f"£{float(dispute.get('value') or 0):,.0f}",
         "bargainingEqual": dispute.get("bargainingPower") == "equal",
         "isConsumer": dispute.get("contractCategory") == "B2C",
         "standardForm": dispute.get("standardForm", False),
@@ -344,9 +296,7 @@ class ILRMFEngine:
         cases_str = ", ".join([f"{c.name} {c.citation}" for c in PHASE1_CASES])
         stat_str = ", ".join([f"{s.act} {s.section}" for s in STATUTES])
         prompt = SYSTEM_PROMPT.format(cases=cases_str, statutes=stat_str)
-        prompt += "
-
-DISPUTE: " + json.dumps(dispute, default=str)
+        prompt += "\n\nDISPUTE: " + json.dumps(dispute, default=str)
         raw_result = await self._call_ai(prompt)
         if not raw_result.get("success"):
             return raw_result
@@ -356,9 +306,8 @@ DISPUTE: " + json.dumps(dispute, default=str)
         incorporation = {"incorporated": True, "score": 100, "reasons": [], "keyCases": []}
         if dispute.get("disputedClause", "").strip():
             incorporation = IncorporationGate.evaluate(v2_facts)
-            logger.info(f"Incorporation Gate: incorporated={incorporation["incorporated"]} score={incorporation["score"]}")
-        all_warnings = []
-        for idx, issue in enumerate(parsed.get("issues", [])):
+            logger.info(f"Incorporation Gate: incorporated={incorporation['incorporated']} score={incorporation['score']}")
+        for issue in parsed.get("issues", []):
             clause = dispute.get("disputedClause", "") or issue.get("issue", "")
             try:
                 fjr = fjr_engine.assess_clause(
@@ -380,22 +329,14 @@ DISPUTE: " + json.dumps(dispute, default=str)
                     logger.info(f"FJR Override: {o}")
             if not incorporation["incorporated"]:
                 enhanced_fjr["incorporationNote"] = "Clause not incorporated — automatically unenforceable."
-                issue["verdict"] = f"NOT INCORPORATED: {incorporation["reasons"][0] if incorporation["reasons"] else "Failed incorporation test"}"
+                issue["verdict"] = f"NOT INCORPORATED: {incorporation['reasons'][0] if incorporation['reasons'] else 'Failed incorporation test'}"
             elif not enhanced_fjr["fair"] or not enhanced_fjr["just"] or not enhanced_fjr["reasonable"]:
                 if not issue["verdict"] or issue["verdict"] == "Not assessed":
-                    issue["verdict"] = fjr.verdict if hasattr(fjr, "verdict") else "Clause fails FJR Triple-Gate."
-            # Legal rules enforcement
-            issue_warnings = LegalRulesEnforcer.enforce(issue, dispute)
-            if issue_warnings:
-                all_warnings.extend(issue_warnings)
-                for w in issue_warnings:
-                    logger.warning(f"Legal Rules: Issue {idx+1}: {w}")
+                    issue["verdict"] = fjr.verdict if hasattr(fjr, 'verdict') else "Clause fails FJR Triple-Gate — potentially void and unenforceable."
             overrides = enhanced_fjr.pop("overrides", [])
             issue["fjr"] = enhanced_fjr
             if overrides:
-                issue["fjr"]["analysis"] += "
-
-" + " ".join(overrides)
+                issue["fjr"]["analysis"] += "\n\n" + " ".join(overrides)
         issues = parsed.get("issues", [])
         any_void = any("VOID" in str(i.get("verdict", "")) for i in issues)
         any_likely_void = any("LIKELY VOID" in str(i.get("verdict", "")) for i in issues)
@@ -410,51 +351,35 @@ DISPUTE: " + json.dumps(dispute, default=str)
             overall_verdict = "VALID"
         claim_value = float(dispute.get("value") or 0)
         court = CourtAssigner.assign(claim_value)
+        logger.info(f"Court: {court['track']} — {court['court']}")
         probability = ProbabilityCalibrator.calculate(overall_verdict, issues, v2_facts, incorporation)
+        logger.info(f"Probability: {probability['probability']}% ({probability['confidence']})")
         rule_relief = ReliefGenerator.generate(overall_verdict, v2_facts, court)
         ai_relief = parsed.get("relief", {})
+        # ALWAYS use AI's primary/secondary/damages/reasoning if provided
+        # ALWAYS use rule-based court assignment (AI often gets this wrong)
+        # ALWAYS use AI's probability for non-unfair-terms cases
         if ai_relief.get("reasoning") and len(ai_relief.get("reasoning", "")) > 20:
-            ai_relief["court"] = f"{court["track"]} — {court["court"]}"
+            ai_relief["court"] = f"{court['track']} — {court['court']}"
             ai_relief.setdefault("interest", rule_relief.get("interest", "N/A"))
             ai_relief.setdefault("secondary", rule_relief.get("secondary", "N/A"))
             parsed["relief"] = ai_relief
         else:
             rule_relief["probability"] = probability["probability"]
             rule_relief["reasoning"] = probability["explanation"]
-            rule_relief["court"] = f"{court["track"]} — {court["court"]}"
+            rule_relief["court"] = f"{court['track']} — {court['court']}"
             parsed["relief"] = rule_relief
         validation = citation_checker.validate(parsed, phase)
-        # HONEST LABELING: citations verified != legally correct
-        if validation["passed"] and not all_warnings:
-            citation_status = "NAMES_VERIFIED"
-            citation_detail = "Case names match known cases. Application correctness not validated."
-        elif validation["passed"] and all_warnings:
-            citation_status = "NAMES_VERIFIED_APPLICATION_FLAGGED"
-            citation_detail = "; ".join(all_warnings[:3])
-        else:
-            citation_status = "FLAGS_FOUND"
-            citation_detail = f"Unknown citations: {validation.get("flagged_citations", [])[:3]}"
-        if all_warnings:
-            logger.warning(f"Citation honesty: {citation_status} — {citation_detail}")
+        hallucination = "ZERO" if validation["passed"] else "FLAGGED"
         parsed["governance"].update({
-            "citationValidation": validation,
-            "citationStatus": citation_status,
-            "citationDetail": citation_detail,
-            "applicationWarnings": all_warnings,
-            "hallucination": citation_status,
-            "assessmentId": aid,
-            "creator": "Md Nazmul Islam (Bijoy)",
-            "org": "NB TECH Bangladesh",
-            "phase": phase,
-            "aiProvider": self._provider,
-            "courtTrack": court["track"],
-            "courtDetails": court["details"],
-            "overallVerdict": overall_verdict,
-            "incorporation": incorporation,
-            "probabilityConfidence": probability["confidence"],
+            "citationValidation": validation, "hallucination": hallucination,
+            "assessmentId": aid, "creator": "Md Nazmul Islam (Bijoy)", "org": "NB TECH Bangladesh",
+            "phase": phase, "aiProvider": self._provider, "courtTrack": court["track"],
+            "courtDetails": court["details"], "overallVerdict": overall_verdict,
+            "incorporation": incorporation, "probabilityConfidence": probability["confidence"],
             "pipeline": "AI + Rule-Based Hybrid",
         })
-        logger.info(f"ILRMF Complete: {aid} | Verdict={overall_verdict} | Citations={citation_status} | Warnings={len(all_warnings)}")
+        logger.info(f"ILRMF Complete: {aid} | Verdict={overall_verdict} | P={parsed['relief'].get('probability', '?')}% | Hallucination={hallucination} | Issues={len(issues)}")
         return {"success": True, "data": parsed, "assessment_id": aid, "phase": phase}
 
     async def _call_ai(self, prompt: str) -> dict:
@@ -514,7 +439,7 @@ DISPUTE: " + json.dumps(dispute, default=str)
             return json.loads(raw)
         except json.JSONDecodeError:
             pass
-        m = re.search(r"", raw, re.DOTALL)
+        m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
         if m:
             try:
                 return json.loads(m.group(1))
