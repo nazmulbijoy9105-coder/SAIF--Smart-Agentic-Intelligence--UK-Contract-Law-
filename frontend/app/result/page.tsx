@@ -158,13 +158,13 @@ export default function ResultPage() {
 
               {/* Arguments */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                <div className="p-4 bg-blue-500/5 border border-blue-500/10 rounded-xl">
-                  <div className="text-blue-400 text-xs font-semibold mb-1 uppercase tracking-wider">Claimant</div>
-                  <p className="text-sm text-white/60">{issue.argument?.claimant || "N/A"}</p>
+                <div className="p-4 bg-blue-500/10 border border-blue-500/25 rounded-xl">
+                  <div className="text-blue-400 text-xs font-bold mb-1 uppercase tracking-wider">Claimant</div>
+                  <p className="text-sm text-white/90">{issue.argument?.claimant || "N/A"}</p>
                 </div>
-                <div className="p-4 bg-purple-500/5 border border-purple-500/10 rounded-xl">
-                  <div className="text-purple-400 text-xs font-semibold mb-1 uppercase tracking-wider">Defendant</div>
-                  <p className="text-sm text-white/60">{issue.argument?.defendant || "N/A"}</p>
+                <div className="p-4 bg-purple-500/10 border border-purple-500/25 rounded-xl">
+                  <div className="text-purple-400 text-xs font-bold mb-1 uppercase tracking-wider">Defendant</div>
+                  <p className="text-sm text-white/90">{issue.argument?.defendant || "N/A"}</p>
                 </div>
               </div>
 
