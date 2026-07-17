@@ -57,7 +57,6 @@ Return ONLY valid JSON. No markdown. No explanation outside JSON.
     "primary": "Specific primary remedy",
     "secondary": "Specific secondary remedy",
     "damages": "Amount or method",
-    "court": "Court/track",
     "probability": 0-100,
     "reasoning": "Why this relief at this probability"
   }},
@@ -230,7 +229,6 @@ def _normalize_response(parsed: dict, dispute: dict) -> dict:
     relief.setdefault("damages", f"£{claim_value:,.0f}" if claim_value else "TBD")
     relief.setdefault("probability", 50)
     relief.setdefault("reasoning", "")
-    relief.setdefault("court", "")
     parsed["relief"] = relief
     gov = parsed.get("governance", {})
     if not isinstance(gov, dict):
@@ -358,8 +356,13 @@ class ILRMFEngine:
         logger.info(f"Probability: {probability['probability']}% ({probability['confidence']})")
         rule_relief = ReliefGenerator.generate(overall_verdict, v2_facts, court)
         ai_relief = parsed.get("relief", {})
+        # ALWAYS use AI's primary/secondary/damages/reasoning if provided
+        # ALWAYS use rule-based court assignment (AI often gets this wrong)
+        # ALWAYS use AI's probability for non-unfair-terms cases
         if ai_relief.get("reasoning") and len(ai_relief.get("reasoning", "")) > 20:
+            ai_relief["court"] = f"{court['track']} — {court['court']}"
             ai_relief.setdefault("interest", rule_relief.get("interest", "N/A"))
+            ai_relief.setdefault("secondary", rule_relief.get("secondary", "N/A"))
             parsed["relief"] = ai_relief
         else:
             rule_relief["probability"] = probability["probability"]
@@ -376,7 +379,7 @@ class ILRMFEngine:
             "incorporation": incorporation, "probabilityConfidence": probability["confidence"],
             "pipeline": "AI + Rule-Based Hybrid",
         })
-        logger.info(f"ILRMF Complete: {aid} | Verdict={overall_verdict} | P={probability['probability']}% | Hallucination={hallucination} | Issues={len(issues)}")
+        logger.info(f"ILRMF Complete: {aid} | Verdict={overall_verdict} | P={parsed['relief'].get('probability', '?')}% | Hallucination={hallucination} | Issues={len(issues)}")
         return {"success": True, "data": parsed, "assessment_id": aid, "phase": phase}
 
     async def _call_ai(self, prompt: str) -> dict:

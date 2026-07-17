@@ -83,9 +83,9 @@ export default function ResultPage() {
           <div><span className="text-white/40">Standard Form:</span> <span className="text-white/80">{facts.standardForm ? "Yes" : "No"}</span></div>
         </div>
         {facts.disputedClause && (
-          <div className="mt-4 p-4 bg-orange-500/5 border border-orange-500/10 rounded-xl text-sm">
+          <div className="mt-4 p-4 bg-orange-500/10 border border-orange-500/20 rounded-xl text-sm">
             <span className="text-orange-300 font-medium">Disputed Clause:</span>{" "}
-            <span className="text-white/60">{facts.disputedClause}</span>
+            <span className="text-white/70">{facts.disputedClause}</span>
           </div>
         )}
       </div>
@@ -120,9 +120,9 @@ export default function ResultPage() {
               </div>
 
               {/* Law */}
-              <div className="p-4 bg-white/[0.02] rounded-xl text-sm mb-4 border border-white/[0.04]">
-                <span className="text-white/40 font-medium">Law: </span>
-                <span className="text-white/70">{issue.law || "Not specified"}</span>
+              <div className="p-4 bg-white/[0.03] rounded-xl text-sm mb-4 border border-white/[0.06]">
+                <span className="text-amber-400 font-semibold text-xs uppercase tracking-wider">Law: </span>
+                <span className="text-white/80 leading-relaxed">{issue.law || "Not specified"}</span>
               </div>
 
               {/* FJR Gates */}
@@ -156,25 +156,33 @@ export default function ResultPage() {
                 </div>
               </div>
 
-              {/* Arguments */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                <div className="p-4 bg-blue-500/5 border border-blue-500/10 rounded-xl">
-                  <div className="text-blue-400 text-xs font-semibold mb-1 uppercase tracking-wider">Claimant</div>
-                  <p className="text-sm text-white/60">{issue.argument?.claimant || "N/A"}</p>
+              {/* FJR Analysis */}
+              {fjr.analysis && (
+                <div className="p-4 bg-white/[0.02] rounded-xl text-sm mb-4 border border-white/[0.04]">
+                  <span className="text-white/40 font-semibold text-xs uppercase tracking-wider">FJR Analysis: </span>
+                  <p className="text-white/70 leading-relaxed mt-1">{fjr.analysis}</p>
                 </div>
-                <div className="p-4 bg-purple-500/5 border border-purple-500/10 rounded-xl">
-                  <div className="text-purple-400 text-xs font-semibold mb-1 uppercase tracking-wider">Defendant</div>
-                  <p className="text-sm text-white/60">{issue.argument?.defendant || "N/A"}</p>
+              )}
+
+              {/* Arguments — HIGH CONTRAST */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <div className="p-4 bg-blue-500/10 border border-blue-500/25 rounded-xl">
+                  <div className="text-blue-400 text-xs font-bold mb-2 uppercase tracking-wider">Claimant Argument</div>
+                  <p className="text-sm text-white/90 leading-relaxed">{issue.argument?.claimant || "N/A"}</p>
+                </div>
+                <div className="p-4 bg-purple-500/10 border border-purple-500/25 rounded-xl">
+                  <div className="text-purple-400 text-xs font-bold mb-2 uppercase tracking-wider">Defendant Argument</div>
+                  <p className="text-sm text-white/90 leading-relaxed">{issue.argument?.defendant || "N/A"}</p>
                 </div>
               </div>
 
               {/* Verdict */}
               <div className={`p-4 rounded-xl text-sm font-medium ${
                 issue.verdict?.includes("ENFORCEABLE")
-                  ? "bg-green-500/8 text-green-300 border border-green-500/15"
+                  ? "bg-green-500/10 text-green-300 border border-green-500/20"
                   : issue.verdict?.includes("VOID") && !issue.verdict?.includes("LIKELY")
-                  ? "bg-red-500/8 text-red-300 border border-red-500/15"
-                  : "bg-orange-500/8 text-orange-300 border border-orange-500/15"
+                  ? "bg-red-500/10 text-red-300 border border-red-500/20"
+                  : "bg-orange-500/10 text-orange-300 border border-orange-500/20"
               }`}>
                 {issue.verdict || "Not assessed"}
               </div>
