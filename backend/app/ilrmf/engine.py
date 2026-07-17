@@ -1,6 +1,6 @@
 """
 SAIF ILRMF Core Engine — AI + Rule-Based Hybrid
-Creator: Md Nazmul Islam (Bijoy) | NB TECH | ILRMF v1.0
+Creator: Md Nazmul Islam (Bijoy) | NB TECH | ILRMF v1.1
 """
 import json
 import re
@@ -62,7 +62,7 @@ Return ONLY valid JSON. No markdown. No explanation outside JSON.
     "probability": 0-100,
     "reasoning": "Why this relief at this probability"
   }},
-  "governance": {{"hallucination": "ZERO", "engine": "ILRMF v1.0"}}
+  "governance": {{"hallucination": "ZERO", "engine": "ILRMF v1.1"}}
 }}
 
 RULES:
@@ -73,12 +73,15 @@ RULES:
 - Only use the legal principles provided in the VERIFIED CASES list. Do NOT apply external knowledge to these cases.
 - If unsure, omit rather than guess
 
-STRICT BREACH AND DAMAGES RULES (Apply when dispute is about termination, repudiation, or failure to pay):
-- When a party clearly states they will not perform (e.g., "going in a different direction"), this is REPUDIATION.
-- You MUST NEVER award "Specific Performance" for service contracts (e.g., web development, consulting, freelancing). English courts refuse to force personal service.
-- If a contract is repudiated and accepted, the innocent party CANNOT demand the full contract price if they have only done part of the work. That is a windfall.
-- For partial completion, damages are usually assessed on a QUANTUM MERUIT basis (reasonable value of work actually done).
-- Lost opportunities (e.g., turning down other projects) are ONLY recoverable if communicated to the defendant at contract formation (Hadley v Baxendale). Otherwise, they are too remote.
+STRICT BREACH, DEBT, AND DAMAGES RULES:
+- When a party clearly states they will not perform, this is REPUDIATION (Hochster v De La Tour).
+- NEVER award "Specific Performance" for service contracts (web dev, consulting, freelancing). English courts refuse to force personal service.
+- DEBT VS DAMAGES: If a milestone was reached, or a 'deemed acceptance' timeframe expired without rejection, the milestone payment becomes an absolute DEBT. Do NOT use Quantum Meruit for completed milestones.
+- QUANTUM MERUIT: Only use Quantum Meruit if (a) there is no valid contract covering the work, OR (b) the contract was terminated BEFORE a specific milestone was reached (partial completion).
+- LOST PROFITS: Lost opportunities are ONLY recoverable if communicated to the defendant at contract formation (Hadley v Baxendale). Otherwise, they are too remote.
+- LATE PAYMENT: In B2B, if a valid invoice is unpaid, automatically apply the Late Payment of Commercial Debts Act 1998 (8% statutory interest).
+- ACCEPTANCE TESTING: If the buyer rejects software for reasons NOT in the Statement of Work (SOW), rule the rejection invalid under Sopar Group v Walker. If a contract gives 'final and binding' discretion to the buyer, apply Bristol Airport v Powdrill (must be exercised rationally).
+- IP DISPUTES: If a freelancer created code and wasn't paid, check for a written IP assignment. If none exists, apply Robin Ray v Classic FM (freelancer keeps copyright, client only gets implied license).
 """
 
 
@@ -87,23 +90,42 @@ class IncorporationGate:
     def evaluate(facts: dict) -> dict:
         score = 50
         reasons = []
+        # Combine clause text and summary for semantic analysis
+        clause_text = str(facts.get("disputedClause", "") + " " + facts.get("summary", "")).lower()
+        
         if facts.get("rushedSignature"):
             score -= 20
             reasons.append("Pressure to sign quickly weakens implied notice (Thornton v Shoe Lane).")
         if not facts.get("specificNotice"):
             score -= 25
             reasons.append("No specific notice of onerous term given (Interfoto v Stiletto).")
+            
+        # SMART SEMANTIC CHECKS (v1.1 Upgrade)
+        if "schedule" in clause_text and ("attached" in clause_text or "appendix" in clause_text):
+            score -= 20
+            reasons.append("Onerous terms hidden in an attached Schedule/Appendix without specific reference.")
+            facts["buriedClause"] = True # Auto-flag as buried
+            
+        if "not drawn to attention" in clause_text or "not highlighted" in clause_text:
+            score -= 15
+            reasons.append("Evidence terms were not brought to the other party's attention.")
+            facts["buriedClause"] = True
+
         if facts.get("buriedClause"):
             score -= 15
             reasons.append("Clause buried in document, not prominent (Thornton v Shoe Lane).")
+            
         if facts.get("signedDocument"):
             score += 30
             reasons.append("Signed document creates baseline incorporation (L'Estrange v Graucob).")
+            
         if facts.get("standardForm") and not facts.get("specificNotice"):
             score -= 10
             reasons.append("Standard form contract without specific notice — heightened scrutiny.")
+            
         score = max(0, min(100, score))
-        incorporated = score >= 50 and not facts.get("buriedClause", False)
+        # Changed logic: If it's buried, it fails regardless of baseline score
+        incorporated = score >= 60 and not facts.get("buriedClause", False) 
         return {
             "incorporated": incorporated, "score": score, "reasons": reasons,
             "keyCases": ["Thornton v Shoe Lane Parking [1971] 2 QB 163", "L'Estrange v Graucob [1934] 2 KB 394", "Interfoto Picture Library v Stiletto [1989] QB 433"],
@@ -176,6 +198,27 @@ class ReliefGenerator:
     @staticmethod
     def generate(verdict: str, facts: dict, court: dict) -> dict:
         claim_value = facts.get("claimValue", "TBD")
+        law_hints = str(facts.get("lawHints", "")).lower()
+        summary = str(facts.get("summary", "")).lower()
+        
+        # NEW: B2B Late Payment Trigger
+        if facts.get("isConsumer") == False and ("unpaid" in summary or "invoice" in summary):
+            return {
+                "primary": "Recovery of unpaid invoice as a liquidated debt",
+                "secondary": "Statutory interest under Late Payment of Commercial Debts Act 1998 (8% above base rate) plus fixed recovery costs",
+                "damages": claim_value,
+                "interest": "Statutory (LPCD Act 1998)"
+            }
+
+        # NEW: IP Infringement Trigger
+        if "copyright" in law_hints or "ip" in law_hints or "robin ray" in law_hints:
+            return {
+                "primary": "Declaration that Claimant retains copyright; Injunction preventing Defendant from using or selling the work to third parties",
+                "secondary": "Account of profits or damages for copyright infringement",
+                "damages": "To be assessed (Account of Profits)",
+                "interest": "Statutory interest under Senior Courts Act 1981 s.35A"
+            }
+
         if verdict == "NOT INCORPORATED":
             return {"primary": "Declaration that the clause was not incorporated and is not binding", "secondary": "Contract performed on basis of implied/reasonable terms", "damages": claim_value, "interest": "Statutory interest under Senior Courts Act 1981 s.35A at 8% per annum"}
         if verdict == "VALID":
@@ -183,6 +226,7 @@ class ReliefGenerator:
         has_pi = "personal injury" in str(facts.get("lawHints", ""))
         if has_pi:
             return {"primary": "Declaration that exclusion clause is void under UCTA 1977 s.2(1)", "secondary": "Full damages for personal injury/death without cap", "damages": "Uncapped — to be assessed by court", "interest": "Statutory interest under Senior Courts Act 1981 s.35A"}
+        
         return {"primary": "Declaration that the clause is void and unenforceable under UCTA 1977/CRA 2015", "secondary": "Damages assessed on ordinary contractual principles (Hadley v Baxendale)", "damages": claim_value, "interest": "Statutory interest under Senior Courts Act 1981 s.35A at 8% per annum"}
 
 
@@ -243,7 +287,7 @@ def _normalize_response(parsed: dict, dispute: dict) -> dict:
     if not isinstance(gov, dict):
         gov = {}
     gov.setdefault("hallucination", "UNKNOWN")
-    gov.setdefault("engine", "ILRMF v1.0")
+    gov.setdefault("engine", "ILRMF v1.1")
     parsed["governance"] = gov
     return parsed
 
@@ -251,6 +295,7 @@ def _normalize_response(parsed: dict, dispute: dict) -> dict:
 def _build_v2_facts(dispute: dict, issues: list) -> dict:
     return {
         "claimValue": f"£{float(dispute.get('value') or 0):,.0f}",
+	"summary": dispute.get("summary", ""),
         "bargainingEqual": dispute.get("bargainingPower") == "equal",
         "isConsumer": dispute.get("contractCategory") == "B2C",
         "standardForm": dispute.get("standardForm", False),
