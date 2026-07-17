@@ -1,6 +1,12 @@
+cat > backend/app/ilrmf/engine.py << 'ENDOFFILE'
 """
-SAIF ILRMF Core Engine - Groq + Gemini support
-Creator: Md Nazmul Islam (Bijoy) | NB TECH | ILRMF
+SAIF ILRMF Core Engine — AI + Rule-Based Hybrid
+Creator: Md Nazmul Islam (Bijoy) | NB TECH | ILRMF v1.0
+
+Architecture:
+  Layer 1 — Groq/Gemini AI generates legal analysis (cases, arguments, reasoning)
+  Layer 2 — Rule-based components calibrate, validate, and hard-override
+  Layer 3 — Citation checker gates hallucination
 """
 import json
 import re
@@ -11,18 +17,397 @@ from app.utils.logger import logger
 
 settings = get_settings()
 
-SYSTEM_PROMPT = (
-    "YOU ARE SAIF - UK Contract Law AI powered by ILRMF. "
-    "Creator: Md Nazmul Islam (Bijoy), NB TECH. "
-    "VERIFIED CASES: {cases} "
-    "VERIFIED STATUTES: {statutes} "
-    "FJR TRIPLE-GATE ON EVERY CLAUSE. ZERO HALLUCINATION. "
-    "Return ONLY valid JSON with keys: facts, issues, relief, governance. "
-    "Each issue must have: issue, law, fjr(fair,just,reasonable,score,analysis), "
-    "argument(claimant,defendant), verdict. "
-    "Governance must include: hallucination=ZERO, engine=ILRMF v1.0."
-)
+# ═══════════════════════════════════════════════════════════════════
+# LAYER 0 — AI PROMPT
+# ═══════════════════════════════════════════════════════════════════
 
+SYSTEM_PROMPT = """YOU ARE SAIF - UK Contract Law AI powered by ILRMF.
+Creator: Md Nazmul Islam (Bijoy), NB TECH.
+VERIFIED CASES: {cases}
+VERIFIED STATUTES: {statutes}
+
+FJR TRIPLE-GATE ON EVERY ISSUE. ZERO HALLUCINATION.
+
+CRITICAL: Use FULL case names. Never truncate.
+CORRECT: "Butler Machine Tool v Ex-Cell-O [1979] 1 WLR 401"
+CORRECT: "Smith v Eric S Bush [1990] AC 831"
+WRONG:   "Butler Machine Tool v Ex"
+WRONG:   "Smith v Eric"
+
+Return ONLY valid JSON. No markdown. No explanation outside JSON.
+
+{{
+  "facts": {{
+    "parties": "Claimant vs Defendant",
+    "contractType": "Commercial/Consumer/Employment",
+    "consumerType": "B2B or B2C",
+    "value": "£X",
+    "bargainingPower": "equal or unequal",
+    "standardForm": true/false,
+    "disputedClause": "clause text or empty string",
+    "summary": "2-3 sentence factual summary"
+  }},
+  "issues": [
+    {{
+      "issue": "The specific legal question",
+      "law": "Full UK case citations with year and reporter. Example: 'Under Butler Machine Tool v Ex-Cell-O [1979] 1 WLR 401, the last shot rule applies. UCTA 1977 s.11 requires reasonableness.'",
+      "fjr": {{
+        "fair": true/false,
+        "just": true/false,
+        "reasonable": true/false,
+        "score": 0-100,
+        "fairScore": 0-100,
+        "justScore": 0-100,
+        "reasonableScore": 0-100,
+        "analysis": "Detailed FJR analysis with case support (4+ sentences)"
+      }},
+      "argument": {{
+        "claimant": "3-4 sentence argument with case law",
+        "defendant": "3-4 sentence argument with case law"
+      }},
+      "verdict": "Clear verdict with legal basis"
+    }}
+  ],
+  "relief": {{
+    "primary": "Specific primary remedy",
+    "secondary": "Specific secondary remedy",
+    "damages": "Amount or method",
+    "court": "Court/track",
+    "probability": 0-100,
+    "reasoning": "Why this relief at this probability"
+  }},
+  "governance": {{
+    "hallucination": "ZERO",
+    "engine": "ILRMF v1.0"
+  }}
+}}
+
+RULES:
+- FULL case names only — never truncate
+- Every issue needs law with full citations
+- Every issue needs claimant AND defendant arguments (3+ sentences)
+- Every issue needs FJR analysis (4+ sentences)
+- Only use well-known UK contract law cases
+- If unsure, omit rather than guess
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════
+# LAYER 1 — RULE-BASED COMPONENTS (from engine_v2)
+# ═══════════════════════════════════════════════════════════════════
+
+class IncorporationGate:
+    """Evaluates whether a clause was properly incorporated into the contract.
+    Based on: Thornton v Shoe Lane Parking [1971] 2 QB 163,
+              L'Estrange v Graucob [1934] 2 KB 394,
+              Interfoto Picture Library v Stiletto [1989] QB 433."""
+
+    @staticmethod
+    def evaluate(facts: dict) -> dict:
+        score = 50
+        reasons = []
+
+        if facts.get("rushedSignature"):
+            score -= 20
+            reasons.append("Pressure to sign quickly weakens implied notice (Thornton v Shoe Lane).")
+        if not facts.get("specificNotice"):
+            score -= 25
+            reasons.append("No specific notice of onerous term given (Interfoto v Stiletto).")
+        if facts.get("buriedClause"):
+            score -= 15
+            reasons.append("Clause buried in document, not prominent (Thornton v Shoe Lane).")
+        if facts.get("signedDocument"):
+            score += 30
+            reasons.append("Signed document creates baseline incorporation (L'Estrange v Graucob), subject to reasonableness.")
+        if facts.get("standardForm") and not facts.get("specificNotice"):
+            score -= 10
+            reasons.append("Standard form contract without specific notice — heightened scrutiny.")
+
+        score = max(0, min(100, score))
+        incorporated = score >= 50 and not facts.get("buriedClause", False)
+
+        return {
+            "incorporated": incorporated,
+            "score": score,
+            "reasons": reasons,
+            "keyCases": [
+                "Thornton v Shoe Lane Parking [1971] 2 QB 163",
+                "L'Estrange v Graucob [1934] 2 KB 394",
+                "Interfoto Picture Library v Stiletto [1989] QB 433",
+            ],
+        }
+
+
+class FJRDynamicScorer:
+    """Supplementary dynamic scorer — provides hard overrides that the
+    statistical FJR engine may miss (e.g., UCTA s.2(1) absolute bar)."""
+
+    @staticmethod
+    def apply_overrides(issue: dict, fjr_scores: dict, facts: dict) -> dict:
+        scores = dict(fjr_scores)
+        overrides = []
+
+        # UCTA s.2(1) — personal injury exclusion is an ABSOLUTE bar
+        law_text = str(issue.get("law", ""))
+        if "s.2(1)" in law_text and ("personal injury" in law_text.lower() or "death" in law_text.lower()):
+            scores["reasonable"] = False
+            scores["reasonableScore"] = 0
+            scores["score"] = 0
+            overrides.append("UCTA s.2(1) absolute bar applied — personal injury exclusion void regardless of reasonableness.")
+
+        # Unilateral variation in consumer context — heavy penalty
+        if ("unilateral variation" in law_text.lower() or "variation" in str(issue.get("issue", "")).lower()):
+            if facts.get("isConsumer") or not facts.get("bargainingEqual", True):
+                if scores["fairScore"] > 20:
+                    scores["fairScore"] = max(0, scores["fairScore"] - 30)
+                    scores["justScore"] = max(0, scores["justScore"] - 25)
+                    overrides.append("Unilateral variation clause in unequal/consumer context — FJR scores reduced (CRA 2015 Sch.2 Para 4).")
+
+        # Recalculate composite score
+        scores["score"] = (scores["fairScore"] + scores["justScore"] + scores["reasonableScore"]) // 3
+        scores["fair"] = scores["fairScore"] >= 50
+        scores["just"] = scores["justScore"] >= 50
+        scores["reasonable"] = scores["reasonableScore"] >= 50
+        scores["overrides"] = overrides
+
+        return scores
+
+
+class ProbabilityCalibrator:
+    """Calibrates success probability based on verdict, case factors, and evidence.
+    Produces explainable probability rather than a single number."""
+
+    @staticmethod
+    def calculate(verdict: str, issues: list, facts: dict, incorporation: dict) -> dict:
+        if verdict == "VALID":
+            return {
+                "probability": 15,
+                "confidence": "Low",
+                "explanation": "Clause deemed valid/enforceable. Low probability of successful challenge.",
+            }
+
+        if verdict == "NOT INCORPORATED":
+            return {
+                "probability": 85,
+                "confidence": "High",
+                "explanation": "Clause not incorporated into contract. Strong position for claimant.",
+            }
+
+        # VOID or LIKELY VOID
+        base = 65
+        reasons = [f"Base probability {base}% due to {verdict} verdict."]
+
+        # UCTA s.2(1) absolute bar
+        has_personal_injury = any("s.2(1)" in str(i.get("law", "")) for i in issues)
+        if has_personal_injury:
+            base = 95
+            reasons.append("UCTA s.2(1) absolute bar on personal injury exclusion — near-certain void.")
+
+        # Consumer bias (CRA 2015)
+        if facts.get("isConsumer"):
+            base = min(95, base + 10)
+            reasons.append("CRA 2015 consumer-friendly interpretation applied.")
+
+        # Incorporation failure strengthens position
+        if not incorporation.get("incorporated", True):
+            base = min(95, base + 5)
+            reasons.append("Incorporation failure further strengthens claimant position.")
+
+        # Weak evidence reduces certainty
+        if facts.get("evidenceQuality") == "weak":
+            base -= 15
+            reasons.append("Weak evidence quality reduces certainty.")
+        elif facts.get("evidenceQuality") == "strong":
+            base = min(95, base + 5)
+            reasons.append("Strong documentary evidence supports claim.")
+
+        # Standard form in B2B — slightly harder to challenge
+        if facts.get("standardForm") and not facts.get("isConsumer"):
+            base -= 5
+            reasons.append("B2B standard form — parties presumed to have read and understood terms.")
+
+        final = max(5, min(95, base))
+        confidence = "High" if final > 70 else "Moderate" if final > 40 else "Low"
+
+        return {
+            "probability": final,
+            "confidence": confidence,
+            "explanation": " ".join(reasons),
+        }
+
+
+class CourtAssigner:
+    """Assigns correct Civil Procedure Rules track and court."""
+
+    @staticmethod
+    def assign(claim_value: float) -> dict:
+        if claim_value <= 10000:
+            return {
+                "track": "Small Claims Track",
+                "court": "County Court",
+                "details": "Informal procedure, costs capped, no automatic legal representation.",
+            }
+        elif claim_value <= 25000:
+            return {
+                "track": "Fast Track",
+                "court": "County Court",
+                "details": "Standard directions, fixed costs schedule, trial usually 1 day.",
+            }
+        elif claim_value <= 100000:
+            return {
+                "track": "Intermediate Track",
+                "court": "County Court",
+                "details": "CPR 26A — introduced 2023, expanded standard directions.",
+            }
+        return {
+            "track": "Multi-Track",
+            "court": "County Court or High Court (KBD)",
+            "details": "Complex cases, individual case management, full costs budgeting.",
+        }
+
+
+class ReliefGenerator:
+    """Generates specific relief recommendations based on verdict."""
+
+    @staticmethod
+    def generate(verdict: str, facts: dict, court: dict) -> dict:
+        claim_value = facts.get("claimValue", "TBD")
+
+        if verdict == "NOT INCORPORATED":
+            return {
+                "primary": "Declaration that the clause was not incorporated and is not binding",
+                "secondary": "Contract performed on basis of implied/reasonable terms",
+                "damages": claim_value,
+                "interest": "Statutory interest under Senior Courts Act 1981 s.35A at 8% per annum",
+                "injunctive": False,
+            }
+
+        if verdict == "VALID":
+            return {
+                "primary": "N/A — clause upheld as valid and enforceable",
+                "secondary": "N/A",
+                "damages": "N/A",
+                "interest": "N/A",
+                "injunctive": False,
+            }
+
+        # VOID or LIKELY VOID
+        has_personal_injury = "personal injury" in str(facts.get("lawHints", ""))
+        if has_personal_injury:
+            return {
+                "primary": "Declaration that exclusion clause is void under UCTA 1977 s.2(1) — absolute bar",
+                "secondary": "Full damages for personal injury/death without cap",
+                "damages": "Uncapped — to be assessed by court",
+                "interest": "Statutory interest under Senior Courts Act 1981 s.35A",
+                "injunctive": False,
+            }
+
+        return {
+            "primary": "Declaration that the clause is void and unenforceable under UCTA 1977/CRA 2015",
+            "secondary": "Damages assessed on ordinary contractual principles (Hadley v Baxendale)",
+            "damages": claim_value,
+            "interest": "Statutory interest under Senior Courts Act 1981 s.35A at 8% per annum",
+            "injunctive": facts.get("requiresInjunction", False),
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# LAYER 2 — RESPONSE NORMALIZER
+# ═══════════════════════════════════════════════════════════════════
+
+def _normalize_response(parsed: dict, dispute: dict) -> dict:
+    """Guarantee every field the frontend expects exists."""
+    claim_value = float(dispute.get("value") or 0)
+
+    facts = parsed.get("facts", {})
+    if not isinstance(facts, dict):
+        facts = {}
+    facts.setdefault("parties", f"{dispute.get('claimant', '')} vs {dispute.get('defendant', '')}")
+    facts.setdefault("contractType", dispute.get("contractType", "N/A"))
+    facts.setdefault("consumerType", dispute.get("contractCategory", "N/A"))
+    facts.setdefault("value", f"£{claim_value:,.0f}" if claim_value else "N/A")
+    facts.setdefault("bargainingPower", dispute.get("bargainingPower", "N/A"))
+    facts.setdefault("standardForm", dispute.get("standardForm", False))
+    facts.setdefault("disputedClause", dispute.get("disputedClause", ""))
+    facts.setdefault("summary", "")
+    parsed["facts"] = facts
+
+    issues = parsed.get("issues", [])
+    if not isinstance(issues, list):
+        issues = []
+    normalized = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        issue.setdefault("issue", "Not specified")
+        issue.setdefault("law", "Not specified by engine")
+
+        fjr = issue.get("fjr", {})
+        if not isinstance(fjr, dict):
+            fjr = {}
+        fjr.setdefault("fair", False)
+        fjr.setdefault("just", False)
+        fjr.setdefault("reasonable", False)
+        fjr.setdefault("score", 50)
+        fjr.setdefault("fairScore", 50)
+        fjr.setdefault("justScore", 50)
+        fjr.setdefault("reasonableScore", 50)
+        fjr.setdefault("analysis", "No detailed analysis provided")
+        issue["fjr"] = fjr
+
+        arg = issue.get("argument", {})
+        if not isinstance(arg, dict):
+            arg = {}
+        arg.setdefault("claimant", "No argument provided")
+        arg.setdefault("defendant", "No argument provided")
+        issue["argument"] = arg
+
+        issue.setdefault("verdict", "Not assessed")
+        normalized.append(issue)
+    parsed["issues"] = normalized
+
+    relief = parsed.get("relief", {})
+    if not isinstance(relief, dict):
+        relief = {}
+    relief.setdefault("primary", "N/A")
+    relief.setdefault("secondary", "N/A")
+    relief.setdefault("damages", f"£{claim_value:,.0f}" if claim_value else "TBD")
+    relief.setdefault("probability", 50)
+    relief.setdefault("reasoning", "")
+    relief.setdefault("court", "")
+    parsed["relief"] = relief
+
+    gov = parsed.get("governance", {})
+    if not isinstance(gov, dict):
+        gov = {}
+    gov.setdefault("hallucination", "UNKNOWN")
+    gov.setdefault("engine", "ILRMF v1.0")
+    parsed["governance"] = gov
+
+    return parsed
+
+
+def _build_v2_facts(dispute: dict, issues: list) -> dict:
+    """Bridge dispute form data → v2 rule-engine facts dict."""
+    has_disputed_clause = bool(dispute.get("disputedClause", "").strip())
+    return {
+        "claimValue": f"£{float(dispute.get('value') or 0):,.0f}",
+        "bargainingEqual": dispute.get("bargainingPower") == "equal",
+        "isConsumer": dispute.get("contractCategory") == "B2C",
+        "standardForm": dispute.get("standardForm", False),
+        "specificNotice": dispute.get("noticeAdequate", True),
+        "signedDocument": not has_disputed_clause or dispute.get("standardForm", False),
+        "rushedSignature": False,
+        "buriedClause": False,
+        "evidenceQuality": "standard",
+        "requiresInjunction": False,
+        "lawHints": " ".join(str(i.get("law", "")) for i in issues),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# LAYER 3 — MAIN ENGINE
+# ═══════════════════════════════════════════════════════════════════
 
 class ILRMFEngine:
     def __init__(self):
@@ -39,7 +424,6 @@ class ILRMFEngine:
                 logger.info("Groq client initialized")
             except Exception as e:
                 logger.error(f"Groq init failed: {e}")
-                self._groq_client = None
         return self._groq_client
 
     @property
@@ -59,14 +443,18 @@ class ILRMFEngine:
                     logger.info("Gemini model initialized (fallback)")
             except Exception as e:
                 logger.error(f"Gemini init failed: {e}")
-                self._gemini_model = None
         return self._gemini_model
+
+    # ───────────────────────────────────────────────────────────
+    # MAIN ASSESSMENT PIPELINE
+    # ───────────────────────────────────────────────────────────
 
     async def assess(self, dispute: dict, phase: int = 1) -> dict:
         phase = max(1, min(phase, 4))
         aid = f"ILRMF-{uuid.uuid4().hex[:12].upper()}"
         logger.info(f"ILRMF Assessment: {aid} | Phase={phase} | Provider={self._provider}")
 
+        # Lazy imports to avoid circular deps
         from app.ilrmf.fjr_engine import fjr_engine
         from app.validators.citation_checker import citation_checker
         from app.corpus.phase1_cases import PHASE1_CASES
@@ -74,6 +462,8 @@ class ILRMFEngine:
 
         cases_str = ", ".join([f"{c.name} {c.citation}" for c in PHASE1_CASES])
         stat_str = ", ".join([f"{s.act} {s.section}" for s in STATUTES])
+
+        # ── STEP 1: AI generates analysis ──
         prompt = SYSTEM_PROMPT.format(cases=cases_str, statutes=stat_str)
         prompt += "\n\nDISPUTE: " + json.dumps(dispute, default=str)
 
@@ -82,10 +472,22 @@ class ILRMFEngine:
             return raw_result
 
         parsed = raw_result["data"]
+        parsed = _normalize_response(parsed, dispute)
 
-        # FJR integration
+        # ── STEP 2: Build v2 facts from dispute ──
+        v2_facts = _build_v2_facts(dispute, parsed.get("issues", []))
+
+        # ── STEP 3: Incorporation Gate (only if disputed clause exists) ──
+        incorporation = {"incorporated": True, "score": 100, "reasons": [], "keyCases": []}
+        if dispute.get("disputedClause", "").strip():
+            incorporation = IncorporationGate.evaluate(v2_facts)
+            logger.info(f"Incorporation Gate: incorporated={incorporation['incorporated']} score={incorporation['score']}")
+
+        # ── STEP 4: Per-issue FJR scoring ──
         for issue in parsed.get("issues", []):
             clause = dispute.get("disputedClause", "") or issue.get("issue", "")
+
+            # 4a. Primary FJR from rule engine
             try:
                 fjr = fjr_engine.assess_clause(
                     clause=clause,
@@ -97,96 +499,118 @@ class ILRMFEngine:
                     allows_unilateral_variation=dispute.get("allowsUnilateralVariation", False),
                     consumer_vulnerable=dispute.get("consumerVulnerable", False),
                 )
-                issue["fjr"] = {
+                base_fjr = {
                     "fair": fjr.fair,
                     "just": fjr.just,
                     "reasonable": fjr.reasonable,
                     "score": fjr.score,
-                    "analysis": fjr.analysis,
                     "fairScore": fjr.fair_score,
                     "justScore": fjr.just_score,
                     "reasonableScore": fjr.reasonable_score,
+                    "analysis": fjr.analysis,
                 }
-                if not fjr.fair or not fjr.just or not fjr.reasonable:
-                    issue["verdict"] = fjr.verdict
             except Exception as e:
-                logger.warning(f"FJR error: {e}")
+                logger.warning(f"FJR engine error: {e}")
+                base_fjr = issue.get("fjr", {})
 
+            # 4b. Dynamic overrides (s.2(1) absolute bar, unilateral variation, etc.)
+            enhanced_fjr = FJRDynamicScorer.apply_overrides(issue, base_fjr, v2_facts)
+
+            # 4c. If overrides fired, log them
+            if enhanced_fjr.get("overrides"):
+                for o in enhanced_fjr["overrides"]:
+                    logger.info(f"FJR Override: {o}")
+
+            # 4d. Incorporation failure → auto-verdict
+            if not incorporation["incorporated"]:
+                enhanced_fjr["incorporationNote"] = "Clause not incorporated — automatically unenforceable regardless of FJR."
+                issue["verdict"] = f"NOT INCORPORATED: {incorporation['reasons'][0] if incorporation['reasons'] else 'Clause failed incorporation test'}"
+            elif not enhanced_fjr["fair"] or not enhanced_fjr["just"] or not enhanced_fjr["reasonable"]:
+                if not issue["verdict"] or issue["verdict"] == "Not assessed":
+                    issue["verdict"] = fjr.verdict if hasattr(fjr, 'verdict') else "Clause fails FJR Triple-Gate — potentially void and unenforceable."
+
+            # Store overrides separately (don't send to frontend as part of FJR display)
+            overrides = enhanced_fjr.pop("overrides", [])
+            issue["fjr"] = enhanced_fjr
+            if overrides:
+                issue["fjr"]["analysis"] += "\n\n" + " ".join(overrides)
+
+        # ── STEP 5: Determine overall verdict ──
+        issues = parsed.get("issues", [])
+        any_void = any("VOID" in str(i.get("verdict", "")) for i in issues)
+        any_likely_void = any("LIKELY VOID" in str(i.get("verdict", "")) for i in issues)
+        any_not_incorporated = any("NOT INCORPORATED" in str(i.get("verdict", "")) for i in issues)
+
+        if any_not_incorporated:
+            overall_verdict = "NOT INCORPORATED"
+        elif any_void:
+            overall_verdict = "VOID"
+        elif any_likely_void:
+            overall_verdict = "LIKELY VOID"
+        else:
+            overall_verdict = "VALID"
+
+        # ── STEP 6: Court assignment ──
+        claim_value = float(dispute.get("value") or 0)
+        court = CourtAssigner.assign(claim_value)
+        logger.info(f"Court: {court['track']} — {court['court']}")
+
+        # ── STEP 7: Probability calibration ──
+        probability = ProbabilityCalibrator.calculate(overall_verdict, issues, v2_facts, incorporation)
+        logger.info(f"Probability: {probability['probability']}% ({probability['confidence']}) — {probability['explanation'][:80]}")
+
+        # ── STEP 8: Relief generation ──
+        rule_relief = ReliefGenerator.generate(overall_verdict, v2_facts, court)
+
+        # Merge: prefer AI's relief if it has reasoning, otherwise use rule-based
+        ai_relief = parsed.get("relief", {})
+        if ai_relief.get("reasoning") and len(ai_relief.get("reasoning", "")) > 20:
+            # AI gave good relief — enhance with rule-based extras
+            ai_relief.setdefault("interest", rule_relief.get("interest", "N/A"))
+            parsed["relief"] = ai_relief
+        else:
+            # Use rule-based relief
+            rule_relief["probability"] = probability["probability"]
+            rule_relief["reasoning"] = probability["explanation"]
+            rule_relief["court"] = f"{court['track']} — {court['court']}"
+            parsed["relief"] = rule_relief
+
+        # ── STEP 9: Citation validation ──
         validation = citation_checker.validate(parsed, phase)
         hallucination = "ZERO" if validation["passed"] else "FLAGGED"
 
-        parsed.setdefault("governance", {})
-        parsed["governance"]["citationValidation"] = validation
-        parsed["governance"]["hallucination"] = hallucination
-        parsed["governance"]["assessmentId"] = aid
-        parsed["governance"]["engine"] = "ILRMF v1.0"
-        parsed["governance"]["creator"] = "Md Nazmul Islam (Bijoy)"
-        parsed["governance"]["org"] = "NB TECH Bangladesh"
-        parsed["governance"]["phase"] = phase
-        parsed["governance"]["aiProvider"] = self._provider
+        # ── STEP 10: Governance ──
+        parsed["governance"].update({
+            "citationValidation": validation,
+            "hallucination": hallucination,
+            "assessmentId": aid,
+            "creator": "Md Nazmul Islam (Bijoy)",
+            "org": "NB TECH Bangladesh",
+            "phase": phase,
+            "aiProvider": self._provider,
+            "courtTrack": court["track"],
+            "courtDetails": court["details"],
+            "overallVerdict": overall_verdict,
+            "incorporation": incorporation,
+            "probabilityConfidence": probability["confidence"],
+            "pipeline": "AI + Rule-Based Hybrid",
+        })
 
-        claim_value = float(dispute.get("value") or 0)
-        if claim_value <= 10000:
-            court = "Small Claims Track"
-        elif claim_value <= 25000:
-            court = "Fast Track (County Court)"
-        elif claim_value <= 100000:
-            court = "Multi Track (County Court)"
-        else:
-            court = "High Court (Kings Bench Division)"
-        parsed["governance"]["courtTrack"] = court
-
-        # ==========================================================
-        # FIX: Downstream Probability & Relief Auto-Population
-        # ==========================================================
-        issues = parsed.get("issues", [])
-        any_void = any("VOID" in str(issue.get("verdict", "")) for issue in issues)
-        any_likely_void = any("LIKELY VOID" in str(issue.get("verdict", "")) for issue in issues)
-        
-        # 1. Probability Calibration (Downstream of FJR Verdict)
-        if any_void:
-            probability = 65  # Baseline for VOID clauses
-            # If UCTA s.2(1) applies (personal injury), it's an absolute bar
-            has_personal_injury = any("s.2(1)" in str(issue.get("law", "")) for issue in issues)
-            if has_personal_injury:
-                probability = 95
-            # Upgrade if consumer/vulnerable
-            if dispute.get("contractCategory") == "B2C" or dispute.get("consumerVulnerable"):
-                probability = min(95, probability + 15)
-        elif any_likely_void:
-            probability = 50
-        else:
-            probability = 15  # Low probability if clause is enforceable
-
-        # 2. Relief Auto-Population
-        if any_void or any_likely_void:
-            primary_relief = "Declaration that clause is void and unenforceable"
-            secondary_relief = "Damages for breach of contract / negligence"
-        else:
-            primary_relief = "N/A"
-            secondary_relief = "N/A"
-
-        # Map to frontend requirements (relief.court, relief.probability, etc.)
-        parsed["relief"] = {
-            "primary": primary_relief,
-            "secondary": secondary_relief,
-            "damages": f"£{claim_value:,.0f}" if claim_value > 0 else "TBD",
-            "court": court,  # Connects the calculated court to the frontend
-            "probability": probability
-        }
-
-        logger.info(f"ILRMF Complete: {aid} | Hallucination={hallucination}")
+        logger.info(f"ILRMF Complete: {aid} | Verdict={overall_verdict} | P={probability['probability']}% | Hallucination={hallucination} | Issues={len(issues)}")
 
         return {"success": True, "data": parsed, "assessment_id": aid, "phase": phase}
 
+    # ───────────────────────────────────────────────────────────
+    # AI PROVIDERS
+    # ───────────────────────────────────────────────────────────
+
     async def _call_ai(self, prompt: str) -> dict:
-        # Try Groq first, then Gemini fallback
         if self._provider == "groq" and self.groq_client:
             result = await self._call_groq(prompt)
             if result.get("success"):
                 return result
             logger.warning("Groq failed, trying Gemini fallback")
-        
+
         if self.gemini_model:
             result = await self._call_gemini(prompt)
             if result.get("success"):
@@ -201,7 +625,7 @@ class ILRMFEngine:
                 response = self.groq_client.chat.completions.create(
                     model=settings.GROQ_MODEL,
                     messages=[
-                        {"role": "system", "content": "Return ONLY valid JSON. No markdown."},
+                        {"role": "system", "content": "Return ONLY valid JSON. No markdown. No explanation."},
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.1,
@@ -211,16 +635,15 @@ class ILRMFEngine:
                 if not raw:
                     raise ValueError("Empty response")
                 parsed = self._parse_json(raw)
-                logger.info(f"Groq OK: attempt={attempt+1} chars={len(raw)}")
+                logger.info(f"Groq OK: attempt={attempt + 1} chars={len(raw)}")
                 return {"success": True, "data": parsed}
             except Exception as e:
-                logger.warning(f"Groq error (attempt {attempt+1}): {e}")
+                logger.warning(f"Groq error (attempt {attempt + 1}): {e}")
                 if "429" in str(e) or "rate" in str(e).lower():
                     time.sleep(5 * (attempt + 1))
                 else:
                     if attempt >= 2:
                         break
-
         return {"success": False, "error": "Groq failed after 3 attempts"}
 
     async def _call_gemini(self, prompt: str) -> dict:
@@ -231,13 +654,12 @@ class ILRMFEngine:
                 if not raw:
                     raise ValueError("Empty response")
                 parsed = self._parse_json(raw)
-                logger.info(f"Gemini OK: attempt={attempt+1} chars={len(raw)}")
+                logger.info(f"Gemini OK: attempt={attempt + 1} chars={len(raw)}")
                 return {"success": True, "data": parsed}
             except Exception as e:
-                logger.warning(f"Gemini error (attempt {attempt+1}): {e}")
+                logger.warning(f"Gemini error (attempt {attempt + 1}): {e}")
                 if "429" in str(e):
                     time.sleep(10 * (attempt + 1))
-
         return {"success": False, "error": "Gemini failed"}
 
     def _parse_json(self, raw: str) -> dict:
@@ -265,3 +687,4 @@ class ILRMFEngine:
 
 
 ilrmf_engine = ILRMFEngine()
+ENDOFFILE
