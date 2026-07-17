@@ -65,6 +65,9 @@ Return ONLY valid JSON. No markdown. No explanation outside JSON.
   "governance": {{"hallucination": "ZERO", "engine": "ILRMF v1.1"}}
 }}
 
+ROUTING DIRECTIVES (OBEY THESE STRICTLY):
+{routing_directives}
+
 RULES:
 - FULL case names only — never truncate
 - Every issue needs law with full citations
@@ -73,16 +76,55 @@ RULES:
 - Only use the legal principles provided in the VERIFIED CASES list. Do NOT apply external knowledge to these cases.
 - If unsure, omit rather than guess
 
+NEGATIVE CONSTRAINTS (ZERO TOLERANCE):
+- NEVER use "Butler Machine Tool v Ex-Cell-O" unless the dispute is explicitly about a 'battle of the forms' (conflicting standard terms exchanged before signing). It does NOT apply to termination, acceptance, or damages.
+- LOST PROFITS STRICT RULE: If the facts DO NOT explicitly state that lost profits/opportunities were communicated to the other party at contract formation, you MUST rule them too remote under Hadley v Baxendale and award £0 for lost profits. Subcontractor costs are direct losses and recoverable; lost opportunities are NOT.
+
 STRICT BREACH, DEBT, AND DAMAGES RULES:
 - When a party clearly states they will not perform, this is REPUDIATION (Hochster v De La Tour).
 - NEVER award "Specific Performance" for service contracts (web dev, consulting, freelancing). English courts refuse to force personal service.
 - DEBT VS DAMAGES: If a milestone was reached, or a 'deemed acceptance' timeframe expired without rejection, the milestone payment becomes an absolute DEBT. Do NOT use Quantum Meruit for completed milestones.
 - QUANTUM MERUIT: Only use Quantum Meruit if (a) there is no valid contract covering the work, OR (b) the contract was terminated BEFORE a specific milestone was reached (partial completion).
-- LOST PROFITS: Lost opportunities are ONLY recoverable if communicated to the defendant at contract formation (Hadley v Baxendale). Otherwise, they are too remote.
 - LATE PAYMENT: In B2B, if a valid invoice is unpaid, automatically apply the Late Payment of Commercial Debts Act 1998 (8% statutory interest).
 - ACCEPTANCE TESTING: If the buyer rejects software for reasons NOT in the Statement of Work (SOW), rule the rejection invalid under Sopar Group v Walker. If a contract gives 'final and binding' discretion to the buyer, apply Bristol Airport v Powdrill (must be exercised rationally).
 - IP DISPUTES: If a freelancer created code and wasn't paid, check for a written IP assignment. If none exists, apply Robin Ray v Classic FM (freelancer keeps copyright, client only gets implied license).
 """
+
+
+class DisputeRouter:
+    """Decision Tree Router to classify disputes and inject targeted legal directives."""
+    @staticmethod
+    def route(dispute: dict) -> list:
+        directives = []
+        category = dispute.get("contractCategory", "B2B")
+        summary = str(dispute.get("summary", "") + " " + dispute.get("disputedClause", "")).lower()
+        
+        # 1. B2B vs B2C Routing
+        if category == "B2C":
+            directives.append("ROUTE: B2C CONSUMER MODE. Disable UCTA 1977. Apply ONLY Consumer Rights Act 2015 s.62 and Consumer Contracts Regs 2013.")
+        else:
+            directives.append("ROUTE: B2B COMMERCIAL MODE. Disable CRA 2015. Apply ONLY UCTA 1977 s.3 and Schedule 2.")
+            
+        # 2. Contract Existence Routing
+        if any(kw in summary for kw in ["no written contract", "implied contract", "oral agreement", "no contract"]):
+            directives.append("ROUTE: IMPLIED CONTRACT MODE. Ignore Incorporation tests. Apply Quantum Meruit principles (Planche v Colburn).")
+        else:
+            directives.append("ROUTE: WRITTEN CONTRACT MODE. Run Incorporation Gate (Interfoto v Stiletto) before analyzing clause validity.")
+            
+        # 3. Primary Relief Routing (The Goldmines)
+        if any(kw in summary for kw in ["unpaid", "invoice", "late payment", "debt", "non-payment"]):
+            directives.append("GOLDMINE: UNPAID DEBT MODE. The primary claim is a debt. You MUST apply the Late Payment of Commercial Debts Act 1998 (8% statutory interest). Do NOT use Quantum Meruit if a milestone was reached.")
+            
+        if any(kw in summary for kw in ["copyright", "intellectual property", "ip ", "source code", "ownership", "assign"]):
+            directives.append("GOLDMINE: IP DISPUTE MODE. You MUST check for a written IP assignment. If none exists, apply Robin Ray v Classic FM (Creator keeps copyright, client only gets implied license).")
+            
+        if any(kw in summary for kw in ["acceptance testing", "rejected", "scope creep", "moving the goalposts", "additional items", "sow"]):
+            directives.append("GOLDMINE: SAAS/ACCEPTANCE MODE. If rejection is based on requirements outside the SOW, apply Sopar Group v Walker (Rejection invalid). If clause gives 'final discretion', apply Bristol Airport v Powdrill (Must be rational).")
+            
+        if any(kw in summary for kw in ["termination", "terminated", "cancel", "end contract"]):
+            directives.append("GOLDMINE: TERMINATION MODE. Check if termination was repudiation (Hochster v De La Tour) or valid exercise of clause. Apply Tullett Prebon if termination seems arbitrary.")
+
+        return directives
 
 
 class IncorporationGate:
@@ -295,7 +337,7 @@ def _normalize_response(parsed: dict, dispute: dict) -> dict:
 def _build_v2_facts(dispute: dict, issues: list) -> dict:
     return {
         "claimValue": f"£{float(dispute.get('value') or 0):,.0f}",
-	"summary": dispute.get("summary", ""),
+        "summary": dispute.get("summary", ""),  # Critical fix for ReliefGenerator triggers
         "bargainingEqual": dispute.get("bargainingPower") == "equal",
         "isConsumer": dispute.get("contractCategory") == "B2C",
         "standardForm": dispute.get("standardForm", False),
@@ -354,8 +396,15 @@ class ILRMFEngine:
         # FIX: Feed key rules to the AI for statutes
         stat_str = "\n".join([f"- {s.act} {s.section} ({s.title}): {s.key_rule}" for s in STATUTES])
         
-        prompt = SYSTEM_PROMPT.format(cases=cases_str, statutes=stat_str)
+        # NEW: Run the Decision Tree Router and format directives
+        routing_directives = DisputeRouter.route(dispute)
+        directives_str = "\n".join([f"- {d}" for d in routing_directives])
+        logger.info(f"Dispute Router Activated: {routing_directives}")
+        
+        # UPDATED: Inject directives into the prompt (Fixes the KeyError)
+        prompt = SYSTEM_PROMPT.format(cases=cases_str, statutes=stat_str, routing_directives=directives_str)
         prompt += "\n\nDISPUTE: " + json.dumps(dispute, default=str)
+        
         raw_result = await self._call_ai(prompt)
         if not raw_result.get("success"):
             return raw_result
