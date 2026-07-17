@@ -97,6 +97,7 @@ class DisputeRouter:
     def route(dispute: dict) -> list:
         directives = []
         category = dispute.get("contractCategory", "B2B")
+	text_payload = dispute.get("summary") or dispute.get("narrative", "")
         summary = str(dispute.get("summary", "") + " " + dispute.get("disputedClause", "")).lower()
         
         # 1. B2B vs B2C Routing
@@ -337,7 +338,7 @@ def _normalize_response(parsed: dict, dispute: dict) -> dict:
 def _build_v2_facts(dispute: dict, issues: list) -> dict:
     return {
         "claimValue": f"£{float(dispute.get('value') or 0):,.0f}",
-        "summary": dispute.get("summary", ""),  # Critical fix for ReliefGenerator triggers
+        "summary": dispute.get("summary") or dispute.get("narrative", ""),
         "bargainingEqual": dispute.get("bargainingPower") == "equal",
         "isConsumer": dispute.get("contractCategory") == "B2C",
         "standardForm": dispute.get("standardForm", False),
