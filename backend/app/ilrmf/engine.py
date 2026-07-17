@@ -13,8 +13,10 @@ settings = get_settings()
 
 SYSTEM_PROMPT = """YOU ARE SAIF - UK Contract Law AI powered by ILRMF.
 Creator: Md Nazmul Islam (Bijoy), NB TECH.
-VERIFIED CASES: {cases}
-VERIFIED STATUTES: {statutes}
+VERIFIED CASES (YOU MUST ONLY USE THESE PRINCIPLES):
+{cases}
+VERIFIED STATUTES:
+{statutes}
 
 FJR TRIPLE-GATE ON EVERY ISSUE. ZERO HALLUCINATION.
 
@@ -40,7 +42,7 @@ Return ONLY valid JSON. No markdown. No explanation outside JSON.
   "issues": [
     {{
       "issue": "The specific legal question",
-      "law": "Full UK case citations with year and reporter.",
+      "law": "Full UK case citations with year and reporter. ONLY use principles from the VERIFIED CASES list above.",
       "fjr": {{
         "fair": true/false, "just": true/false, "reasonable": true/false,
         "score": 0-100, "fairScore": 0-100, "justScore": 0-100, "reasonableScore": 0-100,
@@ -68,8 +70,15 @@ RULES:
 - Every issue needs law with full citations
 - Every issue needs claimant AND defendant arguments (3+ sentences)
 - Every issue needs FJR analysis (4+ sentences)
-- Only use well-known UK contract law cases
+- Only use the legal principles provided in the VERIFIED CASES list. Do NOT apply external knowledge to these cases.
 - If unsure, omit rather than guess
+
+STRICT BREACH AND DAMAGES RULES (Apply when dispute is about termination, repudiation, or failure to pay):
+- When a party clearly states they will not perform (e.g., "going in a different direction"), this is REPUDIATION.
+- You MUST NEVER award "Specific Performance" for service contracts (e.g., web development, consulting, freelancing). English courts refuse to force personal service.
+- If a contract is repudiated and accepted, the innocent party CANNOT demand the full contract price if they have only done part of the work. That is a windfall.
+- For partial completion, damages are usually assessed on a QUANTUM MERUIT basis (reasonable value of work actually done).
+- Lost opportunities (e.g., turning down other projects) are ONLY recoverable if communicated to the defendant at contract formation (Hadley v Baxendale). Otherwise, they are too remote.
 """
 
 
@@ -293,8 +302,13 @@ class ILRMFEngine:
         from app.validators.citation_checker import citation_checker
         from app.corpus.phase1_cases import PHASE1_CASES
         from app.corpus.statutes import STATUTES
-        cases_str = ", ".join([f"{c.name} {c.citation}" for c in PHASE1_CASES])
-        stat_str = ", ".join([f"{s.act} {s.section}" for s in STATUTES])
+        
+        # FIX: Feed principles and key holdings to the AI, not just names
+        cases_str = "\n".join([f"- {c.name} ({c.citation}): {c.principle}. KEY HOLDING: {c.key_holding}" for c in PHASE1_CASES])
+        
+        # FIX: Feed key rules to the AI for statutes
+        stat_str = "\n".join([f"- {s.act} {s.section} ({s.title}): {s.key_rule}" for s in STATUTES])
+        
         prompt = SYSTEM_PROMPT.format(cases=cases_str, statutes=stat_str)
         prompt += "\n\nDISPUTE: " + json.dumps(dispute, default=str)
         raw_result = await self._call_ai(prompt)
