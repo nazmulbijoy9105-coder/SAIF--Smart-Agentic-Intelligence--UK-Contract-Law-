@@ -102,8 +102,9 @@ export default function ResultPage() {
       ) : (
         issues.map((issue: any, idx: number) => {
           const fjr = issue.fjr || {};
-          const score = fjr.score || 0;
-          const scoreColor = score >= 70 ? "text-green-600" : score >= 40 ? "text-orange-600" : "text-red-500";
+          const score = fjr.score;
+          const isNA = score === null || score === undefined;
+          const scoreColor = !isNA && score >= 70 ? "text-green-600" : !isNA && score >= 40 ? "text-orange-600" : "text-red-500";
 
           return (
             <div key={idx} className="glass-card mb-4">
@@ -114,8 +115,8 @@ export default function ResultPage() {
                   <p className="text-gray-500 text-sm mt-1">{issue.issue}</p>
                 </div>
                 <div className="text-4xl font-bold font-mono ml-4">
-                  <span className={scoreColor}>{score}</span>
-                  <span className="text-gray-200 text-lg">/100</span>
+                  <span className={isNA ? "text-gray-500 text-2xl" : scoreColor}>{isNA ? "N/A" : score}</span>
+                  {!isNA && <span className="text-gray-200 text-lg">/100</span>}
                 </div>
               </div>
 
@@ -125,35 +126,25 @@ export default function ResultPage() {
                 <span className="text-gray-600">{issue.law || "Not specified"}</span>
               </div>
 
-              {/* FJR Gates */}
+              {/* FJR Gates - Null Safe Map */}
               <div className="grid grid-cols-3 gap-3 mb-4">
-                <div className={fjr.fair ? "gate-pass" : "gate-fail"}>
-                  <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Fair</div>
-                  <div className={`text-xl font-bold ${fjr.fair ? "text-green-600" : "text-red-500"}`}>
-                    {fjr.fair ? "✓" : "✗"}
-                  </div>
-                  {fjr.fairScore !== undefined && (
-                    <div className="text-[10px] text-gray-300">{fjr.fairScore}/100</div>
-                  )}
-                </div>
-                <div className={fjr.just ? "gate-pass" : "gate-fail"}>
-                  <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Just</div>
-                  <div className={`text-xl font-bold ${fjr.just ? "text-green-600" : "text-red-500"}`}>
-                    {fjr.just ? "✓" : "✗"}
-                  </div>
-                  {fjr.justScore !== undefined && (
-                    <div className="text-[10px] text-gray-300">{fjr.justScore}/100</div>
-                  )}
-                </div>
-                <div className={fjr.reasonable ? "gate-pass" : "gate-fail"}>
-                  <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Reasonable</div>
-                  <div className={`text-xl font-bold ${fjr.reasonable ? "text-green-600" : "text-red-500"}`}>
-                    {fjr.reasonable ? "✓" : "✗"}
-                  </div>
-                  {fjr.reasonableScore !== undefined && (
-                    <div className="text-[10px] text-gray-300">{fjr.reasonableScore}/100</div>
-                  )}
-                </div>
+                {["fair", "just", "reasonable"].map((gate) => {
+                  const isPassed = fjr[gate] === true;
+                  const gateScore = fjr[`${gate}Score`];
+                  const gateIsNA = fjr[gate] === null || fjr[gate] === undefined;
+                  
+                  return (
+                    <div key={gate} className={gateIsNA ? "bg-white/[0.02] rounded-xl p-3 text-center" : (isPassed ? "gate-pass" : "gate-fail")}>
+                      <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">{gate}</div>
+                      <div className={`text-xl font-bold ${gateIsNA ? "text-white/20" : (isPassed ? "text-green-600" : "text-red-500")}`}>
+                        {gateIsNA ? "N/A" : (isPassed ? "✓" : "✗")}
+                      </div>
+                      <div className="text-[10px] text-gray-300">
+                        {gateIsNA ? "N/A" : `${gateScore !== undefined ? gateScore : 0}/100`}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Arguments */}
@@ -171,10 +162,12 @@ export default function ResultPage() {
               {/* Verdict */}
               <div className={`p-4 rounded-xl text-sm font-medium ${
                 issue.verdict?.includes("ENFORCEABLE")
-                  ? "bg-green-50 text-green-300 border border-green-200"
+                  ? "bg-green-50 text-green-700 border border-green-200"
                   : issue.verdict?.includes("VOID") && !issue.verdict?.includes("LIKELY")
-                  ? "bg-red-50 text-red-300 border border-red-200"
-                  : "bg-orange-50 text-orange-300 border border-orange-200"
+                  ? "bg-red-50 text-red-700 border border-red-200"
+                  : issue.verdict?.includes("STANDARD BREACH")
+                  ? "bg-gray-50 text-gray-700 border border-gray-300"
+                  : "bg-orange-50 text-orange-700 border border-orange-200"
               }`}>
                 {issue.verdict || "Not assessed"}
               </div>
@@ -217,7 +210,7 @@ export default function ResultPage() {
       </div>
 
       <p className="text-center text-xs text-gray-200">
-        ILRMF Engine v1.0 — AI-assisted analysis. Not legal advice. Consult a qualified solicitor.
+        ILRMF Engine v1.1 — AI-assisted analysis. Not legal advice. Consult a qualified solicitor.
       </p>
     </main>
   );
