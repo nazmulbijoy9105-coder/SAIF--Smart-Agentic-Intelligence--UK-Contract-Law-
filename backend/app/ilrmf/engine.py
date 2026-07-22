@@ -100,19 +100,16 @@ class DisputeRouter:
         text_payload = dispute.get("summary") or dispute.get("narrative", "")
         summary = str(text_payload + " " + dispute.get("disputedClause", "")).lower()
         
-        # 1. B2B vs B2C Routing
         if category == "B2C":
             directives.append("ROUTE: B2C CONSUMER MODE. Disable UCTA 1977. Apply ONLY Consumer Rights Act 2015 s.62 and Consumer Contracts Regs 2013.")
         else:
             directives.append("ROUTE: B2B COMMERCIAL MODE. Disable CRA 2015. Apply ONLY UCTA 1977 s.3 and Schedule 2.")
             
-        # 2. Contract Existence Routing
         if any(kw in summary for kw in ["no written contract", "implied contract", "oral agreement", "no contract"]):
             directives.append("ROUTE: IMPLIED CONTRACT MODE. Ignore Incorporation tests. Apply Quantum Meruit principles (Planche v Colburn).")
         else:
             directives.append("ROUTE: WRITTEN CONTRACT MODE. Run Incorporation Gate (Interfoto v Stiletto) before analyzing clause validity.")
             
-        # 3. Primary Relief Routing (The Goldmines)
         if any(kw in summary for kw in ["unpaid", "invoice", "late payment", "debt", "non-payment"]):
             directives.append("GOLDMINE: UNPAID DEBT MODE. The primary claim is a debt. You MUST apply the Late Payment of Commercial Debts Act 1998 (8% statutory interest). Do NOT use Quantum Meruit if a milestone was reached.")
             
@@ -131,7 +128,6 @@ class DisputeRouter:
 class IncorporationGate:
     @staticmethod
     def evaluate(facts: dict) -> dict:
-        # FIX: If the user didn't paste an actual clause, skip the incorporation test
         clause_text = str(facts.get("disputedClause", "")).strip()
         if not clause_text or len(clause_text) < 20:
             return {
@@ -142,7 +138,6 @@ class IncorporationGate:
 
         score = 50
         reasons = []
-        # Combine clause text and summary for semantic analysis
         clause_text = str(facts.get("disputedClause", "") + " " + facts.get("summary", "")).lower()
         
         if facts.get("rushedSignature"):
@@ -152,11 +147,10 @@ class IncorporationGate:
             score -= 25
             reasons.append("No specific notice of onerous term given (Interfoto v Stiletto).")
             
-        # SMART SEMANTIC CHECKS (v1.1 Upgrade)
         if "schedule" in clause_text and ("attached" in clause_text or "appendix" in clause_text):
             score -= 20
             reasons.append("Onerous terms hidden in an attached Schedule/Appendix without specific reference.")
-            facts["buriedClause"] = True # Auto-flag as buried
+            facts["buriedClause"] = True
             
         if "not drawn to attention" in clause_text or "not highlighted" in clause_text:
             score -= 15
@@ -176,7 +170,6 @@ class IncorporationGate:
             reasons.append("Standard form contract without specific notice — heightened scrutiny.")
             
         score = max(0, min(100, score))
-        # Changed logic: If it's buried, it fails regardless of baseline score
         incorporated = score >= 60 and not facts.get("buriedClause", False) 
         return {
             "incorporated": incorporated, "score": score, "reasons": reasons,
@@ -214,6 +207,8 @@ class ProbabilityCalibrator:
     def calculate(verdict: str, issues: list, facts: dict, incorporation: dict) -> dict:
         if verdict == "VALID":
             return {"probability": 15, "confidence": "Low", "explanation": "Clause deemed valid/enforceable. Low probability of successful challenge."}
+        if verdict == "STANDARD BREACH":
+            return {"probability": 65, "confidence": "Moderate", "explanation": "Standard breach of contract identified. Probability depends on strict proof of breach, loss, and mitigation (Hadley v Baxendale)."}
         if verdict == "NOT INCORPORATED":
             return {"probability": 85, "confidence": "High", "explanation": "Clause not incorporated into contract. Strong position for claimant."}
         base = 65
@@ -253,7 +248,6 @@ class ReliefGenerator:
         law_hints = str(facts.get("lawHints", "")).lower()
         summary = str(facts.get("summary", "")).lower()
         
-        # NEW: B2B Late Payment Trigger
         if facts.get("isConsumer") == False and ("unpaid" in summary or "invoice" in summary):
             return {
                 "primary": "Recovery of unpaid invoice as a liquidated debt",
@@ -262,7 +256,6 @@ class ReliefGenerator:
                 "interest": "Statutory (LPCD Act 1998)"
             }
 
-        # NEW: IP Infringement Trigger
         if "copyright" in law_hints or "ip" in law_hints or "robin ray" in law_hints:
             return {
                 "primary": "Declaration that Claimant retains copyright; Injunction preventing Defendant from using or selling the work to third parties",
@@ -273,8 +266,18 @@ class ReliefGenerator:
 
         if verdict == "NOT INCORPORATED":
             return {"primary": "Declaration that the clause was not incorporated and is not binding", "secondary": "Contract performed on basis of implied/reasonable terms", "damages": claim_value, "interest": "Statutory interest under Senior Courts Act 1981 s.35A at 8% per annum"}
+        
         if verdict == "VALID":
             return {"primary": "N/A — clause upheld as valid and enforceable", "secondary": "N/A", "damages": "N/A", "interest": "N/A"}
+            
+        if verdict == "STANDARD BREACH":
+            return {
+                "primary": "Damages for breach of contract (cost of cure/replacement plus direct losses)",
+                "secondary": "Consequential losses if proven to be within reasonable contemplation (Hadley v Baxendale)",
+                "damages": claim_value, 
+                "interest": "Statutory interest under Senior Courts Act 1981 s.35A at 8% per annum"
+            }
+            
         has_pi = "personal injury" in str(facts.get("lawHints", ""))
         if has_pi:
             return {"primary": "Declaration that exclusion clause is void under UCTA 1977 s.2(1)", "secondary": "Full damages for personal injury/death without cap", "damages": "Uncapped — to be assessed by court", "interest": "Statutory interest under Senior Courts Act 1981 s.35A"}
@@ -400,18 +403,13 @@ class ILRMFEngine:
         from app.corpus.phase1_cases import PHASE1_CASES
         from app.corpus.statutes import STATUTES
         
-        # FIX: Feed principles and key holdings to the AI, not just names
         cases_str = "\n".join([f"- {c.name} ({c.citation}): {c.principle}. KEY HOLDING: {c.key_holding}" for c in PHASE1_CASES])
-        
-        # FIX: Feed key rules to the AI for statutes
         stat_str = "\n".join([f"- {s.act} {s.section} ({s.title}): {s.key_rule}" for s in STATUTES])
         
-        # NEW: Run the Decision Tree Router and format directives
         routing_directives = DisputeRouter.route(dispute)
         directives_str = "\n".join([f"- {d}" for d in routing_directives])
         logger.info(f"Dispute Router Activated: {routing_directives}")
         
-        # UPDATED: Inject directives into the prompt (Fixes the KeyError)
         prompt = SYSTEM_PROMPT.format(cases=cases_str, statutes=stat_str, routing_directives=directives_str)
         prompt += "\n\nDISPUTE: " + json.dumps(dispute, default=str)
         
@@ -435,24 +433,19 @@ class ILRMFEngine:
             issue_text_lower = str(issue.get("issue", "")).lower()
             law_text_lower = str(issue.get("law", "")).lower()
             
-            # FIX: FJR Triple-Gate ONLY applies to Exclusion Clauses / Unfair Terms (UCTA s.11 / CRA s.62)
-            # It does NOT apply to standard breach of contract, defective goods, or set-off.
             is_exclusion_or_unfair = any(kw in issue_text_lower + law_text_lower for kw in [
                 "exclusion", "liability", "unfair", "penalty", "unilateral variation", "limitation"
             ])
 
             if not is_exclusion_or_unfair:
-                # Bypass FJR engine for standard breaches
                 enhanced_fjr = {
                     "fair": None, "just": None, "reasonable": None, "score": None,
                     "fairScore": None, "justScore": None, "reasonableScore": None,
                     "analysis": "FJR Triple-Gate N/A: This issue concerns a standard breach of contract/defective goods, not an exclusion of liability or unfair term. FJR test under UCTA s.11 does not apply."
                 }
-                # Do not overwrite the verdict with FJR verdict for standard breaches
-                if not issue.get("verdict") or issue["verdict"] == "Not assessed":
-                    issue["verdict"] = "Standard Breach of Contract — FJR N/A"
+                # CRITICAL: Force deterministic verdict unconditionally
+                issue["verdict"] = "STANDARD BREACH OF CONTRACT — FJR N/A"
             else:
-                # Run standard FJR engine
                 try:
                     fjr = fjr_engine.assess_clause(
                         clause=clause, contract_type=dispute.get("contractCategory", "B2B"),
@@ -490,12 +483,16 @@ class ILRMFEngine:
         any_void = any("VOID" in str(i.get("verdict", "")) for i in issues)
         any_likely_void = any("LIKELY VOID" in str(i.get("verdict", "")) for i in issues)
         any_not_incorporated = any("NOT INCORPORATED" in str(i.get("verdict", "")) for i in issues)
+        any_standard_breach = any("STANDARD BREACH" in str(i.get("verdict", "")) for i in issues)
+        
         if any_not_incorporated:
             overall_verdict = "NOT INCORPORATED"
         elif any_void:
             overall_verdict = "VOID"
         elif any_likely_void:
             overall_verdict = "LIKELY VOID"
+        elif any_standard_breach:
+            overall_verdict = "STANDARD BREACH"
         else:
             overall_verdict = "VALID"
             
@@ -506,24 +503,20 @@ class ILRMFEngine:
         logger.info(f"Probability: {probability['probability']}% ({probability['confidence']})")
         
         # -----------------------------------------------------------------
-        # FIX: UNCONDITIONAL DETERMINISTIC GOVERNANCE OVER RELIEF BLOCK
+        # UNCONDITIONAL DETERMINISTIC GOVERNANCE OVER RELIEF BLOCK
         # -----------------------------------------------------------------
         rule_relief = ReliefGenerator.generate(overall_verdict, v2_facts, court)
         ai_relief = parsed.get("relief", {})
 
-        # Use AI relief text ONLY if it provided substantial reasoning, otherwise use rule fallback
         if ai_relief.get("reasoning") and len(ai_relief.get("reasoning", "")) > 30:
             parsed["relief"] = ai_relief
         else:
             parsed["relief"] = rule_relief
 
-        # UNCONDITIONALLY FORCE deterministic governance data into the final output
-        # This prevents the 0% probability and N/A Court bugs from the PDF
         parsed["relief"]["probability"] = probability["probability"]
         parsed["relief"]["court"] = f"{court['track']} — {court['court']}"
         parsed["relief"]["interest"] = rule_relief.get("interest", parsed["relief"].get("interest", "N/A"))
         
-        # If the AI completely failed to generate primary/secondary, pull from rules
         if not parsed["relief"].get("primary") or parsed["relief"]["primary"] == "N/A":
             parsed["relief"]["primary"] = rule_relief.get("primary", "N/A")
         if not parsed["relief"].get("secondary") or parsed["relief"]["secondary"] == "N/A":
