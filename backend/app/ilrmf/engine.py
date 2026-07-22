@@ -463,21 +463,32 @@ class ILRMFEngine:
         logger.info(f"Court: {court['track']} — {court['court']}")
         probability = ProbabilityCalibrator.calculate(overall_verdict, issues, v2_facts, incorporation)
         logger.info(f"Probability: {probability['probability']}% ({probability['confidence']})")
+        
+        # -----------------------------------------------------------------
+        # FIX: UNCONDITIONAL DETERMINISTIC GOVERNANCE OVER RELIEF BLOCK
+        # -----------------------------------------------------------------
         rule_relief = ReliefGenerator.generate(overall_verdict, v2_facts, court)
         ai_relief = parsed.get("relief", {})
-        # ALWAYS use AI's primary/secondary/damages/reasoning if provided
-        # ALWAYS use rule-based court assignment (AI often gets this wrong)
-        # ALWAYS use AI's probability for non-unfair-terms cases
-        if ai_relief.get("reasoning") and len(ai_relief.get("reasoning", "")) > 20:
-            ai_relief["court"] = f"{court['track']} — {court['court']}"
-            ai_relief.setdefault("interest", rule_relief.get("interest", "N/A"))
-            ai_relief.setdefault("secondary", rule_relief.get("secondary", "N/A"))
+
+        # Use AI relief text ONLY if it provided substantial reasoning, otherwise use rule fallback
+        if ai_relief.get("reasoning") and len(ai_relief.get("reasoning", "")) > 30:
             parsed["relief"] = ai_relief
         else:
-            rule_relief["probability"] = probability["probability"]
-            rule_relief["reasoning"] = probability["explanation"]
-            rule_relief["court"] = f"{court['track']} — {court['court']}"
             parsed["relief"] = rule_relief
+
+        # UNCONDITIONALLY FORCE deterministic governance data into the final output
+        # This prevents the 0% probability and N/A Court bugs from the PDF
+        parsed["relief"]["probability"] = probability["probability"]
+        parsed["relief"]["court"] = f"{court['track']} — {court['court']}"
+        parsed["relief"]["interest"] = rule_relief.get("interest", parsed["relief"].get("interest", "N/A"))
+        
+        # If the AI completely failed to generate primary/secondary, pull from rules
+        if not parsed["relief"].get("primary") or parsed["relief"]["primary"] == "N/A":
+            parsed["relief"]["primary"] = rule_relief.get("primary", "N/A")
+        if not parsed["relief"].get("secondary") or parsed["relief"]["secondary"] == "N/A":
+            parsed["relief"]["secondary"] = rule_relief.get("secondary", "N/A")
+        # -----------------------------------------------------------------
+
         validation = citation_checker.validate(parsed, phase)
         hallucination = "ZERO" if validation["passed"] else "FLAGGED"
         parsed["governance"].update({
