@@ -51,10 +51,15 @@ class CitationChecker:
             if not matched:
                 flagged.append(c)
 
-        passed = len(flagged) == 0
-        if not passed:
+        # FIX: Prevent False Positive "ZERO" when LLM outputs 0 citations
+        if len(found) == 0:
+            passed = False
+            logger.warning("⚠️ HALLUCINATION FLAGGED: No case law citations found in LLM output.")
+        elif len(flagged) > 0:
+            passed = False
             logger.warning(f"⚠️ HALLUCINATION FLAGGED: {flagged[:5]}")
         else:
+            passed = True
             logger.info(f"✅ All citations verified: {len(found)} found, 0 flagged")
 
         return {
@@ -62,7 +67,7 @@ class CitationChecker:
             "total_found": len(found),
             "verified_count": len(found) - len(flagged),
             "flagged_count": len(flagged),
-            "flagged_citations": flagged[:10],
+            "flagged_citations": flagged[:10] if len(flagged) > 0 else (["No case law cited by LLM"] if len(found) == 0 else []),
             "phase": phase,
         }
 
