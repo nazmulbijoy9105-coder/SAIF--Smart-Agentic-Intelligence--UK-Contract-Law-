@@ -131,6 +131,15 @@ class DisputeRouter:
 class IncorporationGate:
     @staticmethod
     def evaluate(facts: dict) -> dict:
+        # FIX: If the user didn't paste an actual clause, skip the incorporation test
+        clause_text = str(facts.get("disputedClause", "")).strip()
+        if not clause_text or len(clause_text) < 20:
+            return {
+                "incorporated": True, "score": 100, 
+                "reasons": ["No specific clause text provided for incorporation test; assuming standard written contract terms apply."], 
+                "keyCases": []
+            }
+
         score = 50
         reasons = []
         # Combine clause text and summary for semantic analysis
@@ -412,40 +421,71 @@ class ILRMFEngine:
         parsed = raw_result["data"]
         parsed = _normalize_response(parsed, dispute)
         v2_facts = _build_v2_facts(dispute, parsed.get("issues", []))
+        
         incorporation = {"incorporated": True, "score": 100, "reasons": [], "keyCases": []}
         if dispute.get("disputedClause", "").strip():
             incorporation = IncorporationGate.evaluate(v2_facts)
             logger.info(f"Incorporation Gate: incorporated={incorporation['incorporated']} score={incorporation['score']}")
+            
+        # -----------------------------------------------------------------
+        # CLEAN FJR SCOPE ROUTER LOOP
+        # -----------------------------------------------------------------
         for issue in parsed.get("issues", []):
             clause = dispute.get("disputedClause", "") or issue.get("issue", "")
-            try:
-                fjr = fjr_engine.assess_clause(
-                    clause=clause, contract_type=dispute.get("contractCategory", "B2B"),
-                    bargaining_power_equal=dispute.get("bargainingPower") == "equal",
-                    notice_adequate=dispute.get("noticeAdequate", True),
-                    standard_form=dispute.get("standardForm", False),
-                    value_of_contract=float(dispute.get("value") or 0),
-                    allows_unilateral_variation=dispute.get("allowsUnilateralVariation", False),
-                    consumer_vulnerable=dispute.get("consumerVulnerable", False),
-                )
-                base_fjr = {"fair": fjr.fair, "just": fjr.just, "reasonable": fjr.reasonable, "score": fjr.score, "fairScore": fjr.fair_score, "justScore": fjr.just_score, "reasonableScore": fjr.reasonable_score, "analysis": fjr.analysis}
-            except Exception as e:
-                logger.warning(f"FJR engine error: {e}")
-                base_fjr = issue.get("fjr", {})
-            enhanced_fjr = FJRDynamicScorer.apply_overrides(issue, base_fjr, v2_facts)
-            if enhanced_fjr.get("overrides"):
-                for o in enhanced_fjr["overrides"]:
-                    logger.info(f"FJR Override: {o}")
-            if not incorporation["incorporated"]:
-                enhanced_fjr["incorporationNote"] = "Clause not incorporated — automatically unenforceable."
-                issue["verdict"] = f"NOT INCORPORATED: {incorporation['reasons'][0] if incorporation['reasons'] else 'Failed incorporation test'}"
-            elif not enhanced_fjr["fair"] or not enhanced_fjr["just"] or not enhanced_fjr["reasonable"]:
-                if not issue["verdict"] or issue["verdict"] == "Not assessed":
-                    issue["verdict"] = fjr.verdict if hasattr(fjr, 'verdict') else "Clause fails FJR Triple-Gate — potentially void and unenforceable."
-            overrides = enhanced_fjr.pop("overrides", [])
+            issue_text_lower = str(issue.get("issue", "")).lower()
+            law_text_lower = str(issue.get("law", "")).lower()
+            
+            # FIX: FJR Triple-Gate ONLY applies to Exclusion Clauses / Unfair Terms (UCTA s.11 / CRA s.62)
+            # It does NOT apply to standard breach of contract, defective goods, or set-off.
+            is_exclusion_or_unfair = any(kw in issue_text_lower + law_text_lower for kw in [
+                "exclusion", "liability", "unfair", "penalty", "unilateral variation", "limitation"
+            ])
+
+            if not is_exclusion_or_unfair:
+                # Bypass FJR engine for standard breaches
+                enhanced_fjr = {
+                    "fair": None, "just": None, "reasonable": None, "score": None,
+                    "fairScore": None, "justScore": None, "reasonableScore": None,
+                    "analysis": "FJR Triple-Gate N/A: This issue concerns a standard breach of contract/defective goods, not an exclusion of liability or unfair term. FJR test under UCTA s.11 does not apply."
+                }
+                # Do not overwrite the verdict with FJR verdict for standard breaches
+                if not issue.get("verdict") or issue["verdict"] == "Not assessed":
+                    issue["verdict"] = "Standard Breach of Contract — FJR N/A"
+            else:
+                # Run standard FJR engine
+                try:
+                    fjr = fjr_engine.assess_clause(
+                        clause=clause, contract_type=dispute.get("contractCategory", "B2B"),
+                        bargaining_power_equal=dispute.get("bargainingPower") == "equal",
+                        notice_adequate=dispute.get("noticeAdequate", True),
+                        standard_form=dispute.get("standardForm", False),
+                        value_of_contract=float(dispute.get("value") or 0),
+                        allows_unilateral_variation=dispute.get("allowsUnilateralVariation", False),
+                        consumer_vulnerable=dispute.get("consumerVulnerable", False),
+                    )
+                    base_fjr = {"fair": fjr.fair, "just": fjr.just, "reasonable": fjr.reasonable, "score": fjr.score, "fairScore": fjr.fair_score, "justScore": fjr.just_score, "reasonableScore": fjr.reasonable_score, "analysis": fjr.analysis}
+                    enhanced_fjr = FJRDynamicScorer.apply_overrides(issue, base_fjr, v2_facts)
+                    
+                    if enhanced_fjr.get("overrides"):
+                        for o in enhanced_fjr["overrides"]:
+                            logger.info(f"FJR Override: {o}")
+                    if not incorporation["incorporated"]:
+                        enhanced_fjr["incorporationNote"] = "Clause not incorporated — automatically unenforceable."
+                        issue["verdict"] = f"NOT INCORPORATED: {incorporation['reasons'][0] if incorporation['reasons'] else 'Failed incorporation test'}"
+                    elif not enhanced_fjr["fair"] or not enhanced_fjr["just"] or not enhanced_fjr["reasonable"]:
+                        if not issue["verdict"] or issue["verdict"] == "Not assessed":
+                            issue["verdict"] = fjr.verdict if hasattr(fjr, 'verdict') else "Clause fails FJR Triple-Gate — potentially void and unenforceable."
+                            
+                    overrides = enhanced_fjr.pop("overrides", [])
+                    if overrides:
+                        enhanced_fjr["analysis"] += "\n\n" + " ".join(overrides)
+                except Exception as e:
+                    logger.warning(f"FJR engine error: {e}")
+                    enhanced_fjr = issue.get("fjr", {})
+
             issue["fjr"] = enhanced_fjr
-            if overrides:
-                issue["fjr"]["analysis"] += "\n\n" + " ".join(overrides)
+        # -----------------------------------------------------------------
+
         issues = parsed.get("issues", [])
         any_void = any("VOID" in str(i.get("verdict", "")) for i in issues)
         any_likely_void = any("LIKELY VOID" in str(i.get("verdict", "")) for i in issues)
@@ -458,6 +498,7 @@ class ILRMFEngine:
             overall_verdict = "LIKELY VOID"
         else:
             overall_verdict = "VALID"
+            
         claim_value = float(dispute.get("value") or 0)
         court = CourtAssigner.assign(claim_value)
         logger.info(f"Court: {court['track']} — {court['court']}")
