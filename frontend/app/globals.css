@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-legal-dark text-gray-100 antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  .saif-card {
+    @apply bg-legal-panel border border-gray-700/50 rounded-xl p-6 shadow-lg;
+  }
+  .saif-input {
+    @apply w-full bg-gray-800/50 border border-gray-600 rounded-lg px-4 py-3 text-sm 
+           focus:outline-none focus:ring-2 focus:ring-saif-500 focus:border-transparent
+           placeholder:text-gray-500 transition-all;
+  }
+  .saif-btn-primary {
+    @apply bg-saif-600 hover:bg-saif-500 text-white font-medium px-6 py-3 rounded-lg
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .saif-btn-outline {
+    @apply border border-saif-500 text-saif-400 hover:bg-saif-500/10 font-medium px-6 py-3 rounded-lg
+           transition-colors;
+  }
+}

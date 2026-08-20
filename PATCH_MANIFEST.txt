@@ -1,0 +1,13 @@
+SAIF ILRMF v3.1 — FINAL PRODUCTION PATCH BUNDLE
+
+This archive contains the files revised in the conversation for the live production configuration.
+
+Deployment:
+  Vercel -> Render -> Gemini + Supabase
+
+No localhost fallback.
+No Groq dependency.
+
+NOTE:
+This is a production patch bundle, not a complete clone of the original repository.
+Unchanged modules are intentionally not duplicated in this ZIP.
