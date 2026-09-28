@@ -38,3 +38,17 @@ PHASE1_CASES: List[VerifiedCase] = [
     # Consumer & Subscription Traps
     VerifiedCase("Office of Fair Trading v Ashbourne Management Services Ltd", "[2011] EWHC 1237", 2011, "consumer_subscription", "Auto-renewal requires explicit consent", "Failing to give consumers clear, explicit information about auto-renewals constitutes an unfair commercial practice under CPRs 2008."),
 ]
+# --- v3.1 PORT: verified additions (Bristol Airport v Powdrill + all REVIEW_REQUIRED entries excluded) ---
+PHASE1_CASES.extend([
+    VerifiedCase("L'Estrange v F Graucob Ltd", "[1934] 2 KB 394", 1934, "terms", "Signature binds to signed document", "A party is bound by the terms of a document they signed, whether or not they read it."),
+    VerifiedCase("Thornton v Shoe Lane Parking Ltd", "[1971] 2 QB 163", 1971, "terms", "Onerous terms need prominent notice", "Terms issued after payment, especially onerous ones, are not incorporated without adequate and prominent notice."),
+    VerifiedCase("Photo Production Ltd v Securicor Transport Ltd", "[1980] AC 827", 1980, "unfair_terms", "No fundamental breach rule under UCTA", "Exclusion clauses are governed by construction and UCTA reasonableness; the doctrine of fundamental breach no longer defeats them."),
+    VerifiedCase("Director General of Fair Trading v First National Bank plc", "[2001] UKHL 52", 2001, "unfair_terms", "Fairness test — good faith and imbalance", "A term is unfair if, contrary to good faith, it causes significant imbalance; assessed against the contract as a whole."),
+    VerifiedCase("Planche v Colburn", "(1831) 8 Bing 14", 1831, "damages", "Quantum meruit for abandoned work", "Where one party partly performs and the other abandons, the performer may recover reasonable remuneration for work done."),
+    VerifiedCase("Polkey v A E Dayton Services Ltd", "[1988] AC 344", 1988, "employment", "Procedural fairness in dismissal", "Failure to consult or warn may render dismissal unfair; compensation may be reduced if dismissal would have occurred anyway."),
+    VerifiedCase("British Home Stores Ltd v Burchell", "[1980] ICR 303", 1980, "employment", "Reasonable belief misconduct test", "Dismissal for misconduct is fair if the employer held a genuine belief in guilt based on reasonable grounds after reasonable investigation."),
+    VerifiedCase("Wilson v Racher", "[1974] ICR 428", 1974, "employment", "Constructive dismissal test", "Employee must show employer's repudiatory breach and that resignation was in response to it."),
+    VerifiedCase("Liverpool City Council v Irwin", "[1977] AC 239", 1977, "tenancy", "Implied terms in tenancy", "Terms may be implied into a tenancy where necessary to make the arrangement workable (e.g., maintaining common parts)."),
+    VerifiedCase("Regus (UK) Ltd v Epcot Solutions Ltd", "[2008] EWCA Civ 361", 2008, "unfair_terms", "Commercial limitation clauses can be reasonable", "A clause limiting liability to fees paid was reasonable between commercial parties of equal bargaining power."),
+    VerifiedCase("Tullett Prebon (Services) Ltd v BGC Brokers LP", "[2011] EWCA Civ 131", 2011, "breach", "Termination per contractual machinery", "Contractual termination and notice rights must be exercised strictly in accordance with the contract terms."),
+])

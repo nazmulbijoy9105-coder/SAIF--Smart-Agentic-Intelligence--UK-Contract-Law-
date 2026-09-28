@@ -20,3 +20,12 @@ STATUTES: List[StatuteProvision] = [
     StatuteProvision("Consumer Contracts (Information, Cancellation and Additional Charges) Regulations 2013", 2013, "Reg 13 & 14", "Negative option billing ban", "B2C", "Auto-renewals and 'free trial' traps that require consumer opt-out are automatically unfair."),
     StatuteProvision("Copyright, Designs and Patents Act 1988", 1988, "s.90 & s.91", "IP Assignment requirements", "Both", "Copyright ownership only transfers via signed written document; payment alone does not transfer rights."),
 ]
+# --- v3.1 PORT: EMPLOYMENT / TENANCY / COURT POWERS (independently verified) ---
+STATUTES.extend([
+    StatuteProvision("Employment Rights Act 1996", 1996, "s.98", "Unfair dismissal — fair reason", "Employment", "Employer must show a potentially fair reason (conduct, capability, redundancy, statutory bar) and that dismissal was fair in all the circumstances."),
+    StatuteProvision("Employment Rights Act 1996", 1996, "s.123", "Unfair dismissal — compensation", "Employment", "Compensatory award capped at statutory maximum; basic award calculated by age/service formula."),
+    StatuteProvision("Equality Act 2010", 2010, "ss.13, 19, 26", "Discrimination and harassment", "Employment", "Prohibits direct discrimination, indirect discrimination and harassment based on protected characteristics."),
+    StatuteProvision("Landlord and Tenant Act 1985", 1985, "s.11", "Residential repairing obligations", "Tenancy", "Landlord implied covenant to keep structure/exterior in repair and water, gas, electricity installations in working order."),
+    StatuteProvision("Housing Act 2004", 2004, "ss.213-215", "Tenancy deposit protection", "Tenancy", "AST deposits must be protected in an approved scheme; non-compliance bars s.21 notice and carries a penalty of 1-3x the deposit."),
+    StatuteProvision("Senior Courts Act 1981", 1981, "s.35A", "Court power to award interest", "Both", "Court may award simple interest on judgment debts and damages for such periods as it sees fit."),
+])
